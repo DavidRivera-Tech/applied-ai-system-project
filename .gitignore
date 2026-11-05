@@ -13,3 +13,9 @@ venv/
 
 # Pytest cache
 .pytest_cache/
+
+# Secrets (API keys) - never commit
+.env
+
+# Logs
+logs/*.jsonl
