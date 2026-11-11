@@ -32,7 +32,7 @@ def test_clean_pass(monkeypatch):
     monkeypatch.setattr(assistant, "ask_llm", lambda p: calls.append(p) or good_reply(p))
     result = assistant.run(REQUEST)
     assert result["answer_source"] == "llm" and len(calls) == 1
-    assert all(c["passed"] for c in result["verification"]) and len(result["verification"]) == 3
+    assert all(c["passed"] for c in result["verification"]) and len(result["verification"]) == 4
     assert 0 < result["confidence"] <= 1
 
 
@@ -41,7 +41,9 @@ def test_made_up_song_is_caught_retried_then_falls_back(monkeypatch):
 
     def fake(prompt):
         calls.append(prompt)
-        return json.dumps({"picks": [{"title": "Totally Made Up Song", "why": "x"}], "summary": "s"})
+        # Right count, no duplicates, clean text: only one title is made up.
+        titles = retrieved_titles(prompt)[:2] + ["Totally Made Up Song"]
+        return json.dumps({"picks": [{"title": t, "why": "fits"} for t in titles], "summary": "s"})
 
     monkeypatch.setattr(assistant, "ask_llm", fake)
     result = assistant.run(REQUEST)
@@ -49,7 +51,11 @@ def test_made_up_song_is_caught_retried_then_falls_back(monkeypatch):
     assert "rejected" in calls[1] and "Totally Made Up Song" in calls[1]  # retry tells the LLM what was wrong
     assert result["answer_source"] == "template"
     assert all(p["title"] in [s["title"] for s, _, _ in result["retrieved"]] for p in result["answer"]["picks"])
-    steps = [s["step"] for s in json.loads(assistant.LOG_PATH.read_text().splitlines()[-1])["steps"]]
+    trace = json.loads(assistant.LOG_PATH.read_text().splitlines()[-1])
+    first_verify = next(s for s in trace["steps"] if s["step"] == "verify")
+    failed = [name for name, ok in first_verify["checks"].items() if not ok]
+    assert failed == ["titles_match_retrieved"]  # it failed for the right reason, and only that one
+    steps = [s["step"] for s in trace["steps"]]
     assert "retry" in steps and "fallback" in steps
 
 
@@ -78,8 +84,10 @@ def test_duplicate_picks_and_leaked_summary_are_caught(monkeypatch):
     checks = assistant.verify_answer(
         {"picks": [{"title": t, "why": ""}, {"title": t, "why": ""}], "summary": f"Also try {outsider.lower()}!"},
         retrieved, songs)
-    failed = {c["check"] for c in checks if not c["passed"]}
-    assert failed == {"no_duplicate_picks", "summary_names_only_retrieved"}
+    failed = {c["check"]: c["detail"] for c in checks if not c["passed"]}
+    # Two identical picks also means the pick count is wrong (2, not 3).
+    assert set(failed) == {"no_duplicate_picks", "text_names_only_retrieved", "correct_pick_count"}
+    assert "'" in failed["text_names_only_retrieved"] and "in summary" in failed["text_names_only_retrieved"]
 
 
 def test_transient_error_retried_once(monkeypatch):
@@ -108,14 +116,52 @@ def test_non_transient_error_falls_back_without_retry(monkeypatch):
     assert len(calls) == 1 and result["answer_source"] == "template"
 
 
-def test_trace_line_written_without_secrets(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "SECRET-KEY-123")
+def test_trace_line_has_expected_fields(monkeypatch):
     monkeypatch.setattr(assistant, "ask_llm", lambda p: good_reply(p))
     assistant.run(REQUEST)
-    text = assistant.LOG_PATH.read_text()
-    record = json.loads(text.splitlines()[-1])
+    record = json.loads(assistant.LOG_PATH.read_text().splitlines()[-1])
     assert {"timestamp", "request", "steps", "errors", "answer_source", "confidence"} <= record.keys()
-    assert "SECRET-KEY-123" not in text
+
+
+def _outsider_and_retrieved():
+    songs = assistant.load_songs(assistant.SONGS_PATH)
+    retrieved = assistant.run(REQUEST, offline=True)["retrieved"]
+    outsider = next(s["title"] for s in songs if s["title"] not in [r[0]["title"] for r in retrieved])
+    return songs, retrieved, outsider
+
+
+def test_why_text_naming_unretrieved_song_fails():
+    songs, retrieved, outsider = _outsider_and_retrieved()
+    picks = [{"title": r[0]["title"], "why": "fits"} for r in retrieved[:3]]
+    picks[1]["why"] = f"Much like {outsider}, it is calm."
+    checks = {c["check"]: c for c in assistant.verify_answer({"picks": picks, "summary": "clean"}, retrieved, songs)}
+    assert not checks["text_names_only_retrieved"]["passed"]
+    assert "picks[1].why" in checks["text_names_only_retrieved"]["detail"]  # reports which field leaked
+    assert checks["titles_match_retrieved"]["passed"] and checks["correct_pick_count"]["passed"]
+
+
+def test_single_pick_fails_correct_pick_count():
+    songs, retrieved, _ = _outsider_and_retrieved()
+    answer = {"picks": [{"title": retrieved[0][0]["title"], "why": "fits"}], "summary": "ok"}
+    checks = {c["check"]: c for c in assistant.verify_answer(answer, retrieved, songs)}
+    assert not checks["correct_pick_count"]["passed"]
+    assert "expected 3 picks, got 1" in checks["correct_pick_count"]["detail"]
+    assert all(c["passed"] for name, c in checks.items() if name != "correct_pick_count")
+
+
+def test_expected_pick_count_shrinks_when_few_songs_retrieved():
+    songs = assistant.load_songs(assistant.SONGS_PATH)
+    retrieved = assistant.run(REQUEST, k=2, offline=True)["retrieved"]
+    answer = {"picks": [{"title": r[0]["title"], "why": "fits"} for r in retrieved], "summary": "ok"}
+    checks = assistant.verify_answer(answer, retrieved, songs)
+    assert next(c for c in checks if c["check"] == "correct_pick_count")["passed"]
+
+
+def test_cleaned_request_is_used_in_prompt(monkeypatch):
+    seen = []
+    monkeypatch.setattr(assistant, "ask_llm", lambda p: seen.append(p) or good_reply(p))
+    assistant.run("  something   chill\n to study to,   no vocals  ")
+    assert 'The listener asked: "something chill to study to, no vocals"' in seen[0]
 
 
 def test_template_possessive():

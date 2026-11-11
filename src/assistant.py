@@ -109,26 +109,39 @@ def _parse_llm_answer(raw: str) -> Dict:
 
 # ---------------------------------------------------------------- verification
 
+def _fields(answer: Dict) -> Dict[str, str]:
+    """Every free-text field of an answer, keyed by where it came from."""
+    fields = {f"picks[{i}].why": p["why"] for i, p in enumerate(answer["picks"])}
+    fields["summary"] = answer.get("summary", "")
+    return fields
+
+
 def verify_answer(answer: Dict, retrieved: List, all_songs: List[Dict]) -> List[Dict]:
-    """Three checks on an answer. Returns [{check, passed, detail}]."""
+    """Four checks on an answer. Returns [{check, passed, detail}]."""
     retrieved_titles = [s["title"] for s, _, _ in retrieved]
     picked = [p["title"] for p in answer["picks"]]
 
     unknown = [t for t in picked if t not in retrieved_titles]
     dupes = sorted({t for t in picked if picked.count(t) > 1})
-    summary = answer.get("summary", "")
-    leaked = [
-        s["title"] for s in all_songs
-        if s["title"] not in retrieved_titles
-        and re.search(rf"(?<!\w){re.escape(s['title'])}(?!\w)", summary, flags=re.IGNORECASE)
-    ]
+
+    outsiders = [s["title"] for s in all_songs if s["title"] not in retrieved_titles]
+    leaks = []  # (field, title)
+    for field, text in _fields(answer).items():
+        for title in outsiders:
+            if re.search(rf"(?<!\w){re.escape(title)}(?!\w)", text, flags=re.IGNORECASE):
+                leaks.append((field, title))
+
+    expected = min(N_PICKS, len(retrieved))
     return [
         {"check": "titles_match_retrieved", "passed": not unknown,
          "detail": f"not retrieved: {unknown}" if unknown else "all picks were retrieved"},
         {"check": "no_duplicate_picks", "passed": not dupes,
          "detail": f"duplicates: {dupes}" if dupes else "no duplicates"},
-        {"check": "summary_names_only_retrieved", "passed": not leaked,
-         "detail": f"summary names un-retrieved songs: {leaked}" if leaked else "summary is clean"},
+        {"check": "text_names_only_retrieved", "passed": not leaks,
+         "detail": ("un-retrieved songs named: " + ", ".join(f"{t!r} in {f}" for f, t in leaks))
+         if leaks else "picks' explanations and summary are clean"},
+        {"check": "correct_pick_count", "passed": len(picked) == expected,
+         "detail": f"expected {expected} picks, got {len(picked)}"},
     ]
 
 
@@ -250,7 +263,7 @@ def run(request: str, k: int = 5, offline: bool = False, use_guide: bool = True)
 
     answer, checks, verify_state = None, [], "template"
     if not offline and is_llm_available():
-        answer, checks, verify_state = _generate_verified(request, retrieved, notes, songs, trace)
+        answer, checks, verify_state = _generate_verified(cleaned, retrieved, notes, songs, trace)
         if answer is not None:
             result["answer_source"] = "llm"
     if answer is None:
