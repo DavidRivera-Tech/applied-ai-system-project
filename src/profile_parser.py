@@ -258,7 +258,7 @@ def validate_profile(profile: Dict) -> Tuple[Dict, List[str]]:
 
 # ---------------------------------------------------------------- parse_request
 
-def parse_request(text: str, few_shot: bool = True) -> Tuple[Optional[Dict], str, List[str]]:
+def parse_request(text: str, few_shot: bool = True, offline: bool = False) -> Tuple[Optional[Dict], str, List[str]]:
     """Validate, try the LLM, fall back to offline. Returns (profile, source, fixes).
 
     A rejected request returns (None, "rejected", [error message]).
@@ -267,7 +267,7 @@ def parse_request(text: str, few_shot: bool = True) -> Tuple[Optional[Dict], str
     if not ok:
         return None, "rejected", [result]
 
-    if is_llm_available():
+    if not offline and is_llm_available():
         try:
             profile, fixes = validate_profile(parse_with_llm(result, few_shot))
             return profile, "llm", fixes
