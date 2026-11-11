@@ -1,5 +1,13 @@
 # 🎵 Music Recommender Simulation
 
+## Original Project: Music Recommender Simulation (Module 3)
+
+The original project was a content-based music recommender that scored 22 songs against a hand-written taste profile (genre, mood, energy, and acousticness), ranked them, and explained each score. It also offered optional ranking modes and a diversity penalty. It worked, but it had real limits that this project fixes:
+
+- It couldn't understand plain-English requests; the taste profile had to be written by hand.
+- It used brittle exact string matching, so "Pop" did not match "pop".
+- It had no self-checking of its output.
+
 ## Project Summary
 
 My version is called **GenreFirst 1.0**. It is a small content-based music recommender that reads a 22-song catalog and scores every song against one listener's taste: a favorite genre, a favorite mood, a target energy level, and whether they like acoustic sound. Genre match counts the most (+2.00), then how close the song's energy is to the target (up to 1.50), then mood (+1.00), then acoustic preference (up to 0.50). It sorts the songs by score and prints the top 5, with the reasons behind each score. It also supports optional extra rules, four ranking modes (`--mode`), an optional diversity re-rank (`--diversity`), and table output (`--table`). I tested it on six listener profiles, including three edge cases, plus a seventh profile that demonstrates the optional extra rules, to see where it works well and where genre-heavy scoring and a tiny catalog lead it astray.
