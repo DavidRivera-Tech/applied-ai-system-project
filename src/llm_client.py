@@ -11,7 +11,23 @@ TIMEOUT_MS = 60_000
 
 
 class LLMError(RuntimeError):
-    """Raised with a user-friendly message when the LLM can't be used."""
+    """Raised with a user-friendly message when the LLM can't be used.
+
+    `transient` is True for errors worth one retry (timeouts, 429, 5xx, connection drops).
+    """
+
+    def __init__(self, message: str, code=None, transient: bool = False):
+        super().__init__(message)
+        self.code = code
+        self.transient = transient
+
+
+def _is_transient(exc: Exception) -> bool:
+    code = getattr(exc, "code", None)
+    if isinstance(code, int):
+        return code in (408, 429) or 500 <= code < 600
+    name = type(exc).__name__.lower()
+    return any(word in name for word in ("timeout", "connect", "remote", "network"))
 
 
 def is_llm_available() -> bool:
@@ -40,7 +56,9 @@ def ask_llm(prompt: str) -> str:
         # Only the exception type/message is shown; the key is never included.
         raise LLMError(
             f"Gemini API call failed ({type(exc).__name__}, code={getattr(exc, 'code', 'n/a')}) "
-            f"using model '{MODEL_NAME}'. Check your API key, network, quota, and model name."
+            f"using model '{MODEL_NAME}'. Check your API key, network, quota, and model name.",
+            code=getattr(exc, "code", None),
+            transient=_is_transient(exc),
         ) from None
     if not text:
         raise LLMError(f"Gemini returned an empty response from model '{MODEL_NAME}'.")

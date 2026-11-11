@@ -1,17 +1,58 @@
-"""RAG assistant: plain-English request -> profile -> retrieved songs + guide notes -> answer."""
+"""RAG assistant: plain-English request -> profile -> retrieved songs + guide notes -> verified answer."""
 
 import argparse
 import json
-from typing import Dict, List, Optional
+import re
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 from src.llm_client import LLMError, ask_llm, is_llm_available
-from src.profile_parser import parse_request
-from src.recommender import load_songs
-from src.retriever import GUIDE_PATH, retrieve_guide_notes, retrieve_songs  # noqa: F401
+from src.profile_parser import parse_request, validate_request
+from src.recommender import get_strategy, load_songs
+from src.retriever import retrieve_guide_notes, retrieve_songs
 
 SONGS_PATH = "data/songs.csv"
+LOG_PATH = Path(__file__).resolve().parent.parent / "logs" / "traces.jsonl"
 N_PICKS = 3
 
+
+# ---------------------------------------------------------------- trace
+
+class Trace:
+    """Collects timed steps for one run and appends them as one JSON line."""
+
+    def __init__(self, request: str):
+        self.request = request
+        self.steps: List[Dict] = []
+        self.errors: List[Dict] = []
+
+    def add(self, step: str, ok: bool, started: float, **detail) -> None:
+        self.steps.append({"step": step, "ok": ok, "ms": round((time.perf_counter() - started) * 1000, 1), **detail})
+
+    def error(self, step: str, exc: Exception) -> None:
+        # Type and message only. LLMError messages never contain the API key.
+        self.errors.append({"step": step, "type": type(exc).__name__, "message": str(exc)})
+
+    def write(self, result: Dict) -> None:
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "request": self.request,
+            "steps": self.steps,
+            "errors": self.errors,
+            "answer_source": result.get("answer_source"),
+            "confidence": result.get("confidence"),
+        }
+        try:
+            LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(LOG_PATH, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, default=str) + "\n")
+        except OSError:
+            pass  # logging must never break the assistant
+
+
+# ---------------------------------------------------------------- prompt / template
 
 def build_answer_prompt(request: str, retrieved: List, notes: Dict[str, str]) -> str:
     lines = [
@@ -28,11 +69,16 @@ def build_answer_prompt(request: str, retrieved: List, notes: Dict[str, str]) ->
         lines += [f"- {name}: {text}" for name, text in notes.items()]
     lines += [
         "",
-        f"Pick {N_PICKS} of the candidate songs and explain why each fits in 2-3 friendly sentences "
-        "total across the answer. Use exact titles from the list. Reply with ONLY JSON in this shape:",
+        f"Pick {N_PICKS} different candidate songs and explain why each fits in 2-3 friendly sentences "
+        "total across the answer. Use exact titles from the list, and do not mention any other song. "
+        "Reply with ONLY JSON in this shape:",
         '{"picks": [{"title": "...", "why": "..."}], "summary": "..."}',
     ]
     return "\n".join(lines)
+
+
+def _possessive(name: str) -> str:
+    return f"{name}'" if name.endswith("s") else f"{name}'s"
 
 
 def template_answer(retrieved: List) -> Dict:
@@ -40,51 +86,189 @@ def template_answer(retrieved: List) -> Dict:
     picks = []
     for song, _, reasons in retrieved[:N_PICKS]:
         why = reasons.replace(";", ",") if reasons else "it was one of the closest matches"
-        picks.append({"title": song["title"], "why": f"{song['artist']}'s {song['genre']} track fits because: {why}."})
+        picks.append({"title": song["title"],
+                      "why": f"{_possessive(song['artist'])} {song['genre']} track fits because: {why}."})
     titles = ", ".join(p["title"] for p in picks)
     return {"picks": picks, "summary": f"Based on your request, the best matches in the catalog are: {titles}."}
 
 
-def _parse_llm_answer(raw: str, retrieved: List) -> Dict:
+def _parse_llm_answer(raw: str) -> Dict:
     start, end = raw.find("{"), raw.rfind("}")
     if start == -1 or end == -1:
-        raise ValueError("no JSON in answer")
-    data = json.loads(raw[start:end + 1])
-    picks = data["picks"]
-    if not isinstance(picks, list) or not picks:
-        raise ValueError("no picks")
-    clean = [{"title": str(p["title"]), "why": str(p["why"])} for p in picks]
-    return {"picks": clean, "summary": str(data.get("summary", ""))}
+        raise ValueError("response contained no JSON object")
+    try:
+        data = json.loads(raw[start:end + 1])
+        picks = data["picks"]
+        if not isinstance(picks, list) or not picks:
+            raise ValueError("'picks' must be a non-empty list")
+        clean = [{"title": str(p["title"]), "why": str(p["why"])} for p in picks]
+        return {"picks": clean, "summary": str(data.get("summary", ""))}
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise ValueError(f"invalid answer JSON ({type(exc).__name__}: {exc})") from None
 
+
+# ---------------------------------------------------------------- verification
+
+def verify_answer(answer: Dict, retrieved: List, all_songs: List[Dict]) -> List[Dict]:
+    """Three checks on an answer. Returns [{check, passed, detail}]."""
+    retrieved_titles = [s["title"] for s, _, _ in retrieved]
+    picked = [p["title"] for p in answer["picks"]]
+
+    unknown = [t for t in picked if t not in retrieved_titles]
+    dupes = sorted({t for t in picked if picked.count(t) > 1})
+    summary = answer.get("summary", "")
+    leaked = [
+        s["title"] for s in all_songs
+        if s["title"] not in retrieved_titles
+        and re.search(rf"(?<!\w){re.escape(s['title'])}(?!\w)", summary, flags=re.IGNORECASE)
+    ]
+    return [
+        {"check": "titles_match_retrieved", "passed": not unknown,
+         "detail": f"not retrieved: {unknown}" if unknown else "all picks were retrieved"},
+        {"check": "no_duplicate_picks", "passed": not dupes,
+         "detail": f"duplicates: {dupes}" if dupes else "no duplicates"},
+        {"check": "summary_names_only_retrieved", "passed": not leaked,
+         "detail": f"summary names un-retrieved songs: {leaked}" if leaked else "summary is clean"},
+    ]
+
+
+def _problems(checks: List[Dict]) -> List[str]:
+    return [f"{c['check']}: {c['detail']}" for c in checks if not c["passed"]]
+
+
+# ---------------------------------------------------------------- confidence
+
+def max_possible_score(profile: Dict, mode: str = "balanced") -> float:
+    """Best score a song could earn for the preferences actually present in the profile."""
+    w = get_strategy(mode).weights
+    total = 0.0
+    for key, weight_key in (("genre", "genre"), ("mood", "mood"), ("energy", "energy"),
+                            ("likes_acoustic", "acoustic"), ("tempo_bpm", "tempo"),
+                            ("instrumental", "instrumental")):
+        if profile.get(key) is not None:
+            total += w[weight_key]
+    total += w["mood_tag"] * min(3, len(profile.get("mood_tags") or []))
+    return total
+
+
+def compute_confidence(profile: Dict, retrieved: List, parse_source: str, verify_state: str) -> Tuple[float, str]:
+    """0-1 confidence from retrieval strength (50%), parse source (20%), verification (30%)."""
+    top = retrieved[0][1] if retrieved else 0.0
+    best = max_possible_score(profile)
+    strength = min(1.0, top / best) if best else 0.0
+    parse = 1.0 if parse_source == "llm" else 0.5
+    verify = {"first_try": 1.0, "after_retry": 0.5, "template": 0.5}[verify_state]
+    score = round(0.5 * strength + 0.2 * parse + 0.3 * verify, 2)
+    verify_text = {"first_try": "passed on the first try", "after_retry": "passed only after a retry",
+                   "template": "answer built from a template (not LLM-checked)"}[verify_state]
+    explanation = (f"top score {top:.2f} of a possible {best:.2f}; request parsed by {parse_source}; "
+                   f"verification {verify_text}.")
+    return score, explanation
+
+
+# ---------------------------------------------------------------- generation with retries
+
+def _call_llm(prompt: str, trace: Trace) -> str:
+    """One LLM call, retried once if the error is transient (timeout, 429, 5xx)."""
+    for attempt in (1, 2):
+        started = time.perf_counter()
+        try:
+            raw = ask_llm(prompt)
+            trace.add("generate", True, started, api_try=attempt)
+            return raw
+        except LLMError as exc:
+            trace.add("generate", False, started, api_try=attempt, error=type(exc).__name__)
+            trace.error("generate", exc)
+            if attempt == 1 and exc.transient:
+                trace.add("retry", True, time.perf_counter(), reason="transient API error")
+                continue
+            raise
+    raise AssertionError("unreachable")
+
+
+def _generate_verified(request, retrieved, notes, all_songs, trace) -> Tuple[Optional[Dict], List[Dict], str]:
+    """Ask the LLM, verify, retry once with feedback. Returns (answer|None, checks, verify_state)."""
+    base = build_answer_prompt(request, retrieved, notes)
+    prompt, checks = base, []
+    for attempt in (1, 2):
+        try:
+            raw = _call_llm(prompt, trace)
+        except LLMError:
+            return None, checks, "failed"
+
+        started = time.perf_counter()
+        try:
+            answer = _parse_llm_answer(raw)
+            checks = verify_answer(answer, retrieved, all_songs)
+            problems = _problems(checks)
+        except ValueError as exc:
+            answer, checks, problems = None, [], [f"bad JSON: {exc}"]
+            trace.error("verify", exc)
+        trace.add("verify", not problems, started, attempt=attempt,
+                  checks={c["check"]: c["passed"] for c in checks}, problems=problems)
+
+        if not problems:
+            return answer, checks, "first_try" if attempt == 1 else "after_retry"
+        if attempt == 1:
+            trace.add("retry", True, time.perf_counter(), reason="; ".join(problems))
+            prompt = (base + "\n\nYour previous reply was rejected for these problems:\n- "
+                      + "\n- ".join(problems)
+                      + "\nFix them. Use only exact titles from the candidate list, no duplicates, "
+                        "and reply with ONLY the JSON.")
+    return None, checks, "failed"
+
+
+# ---------------------------------------------------------------- main entry point
 
 def run(request: str, k: int = 5, offline: bool = False, use_guide: bool = True) -> Dict:
-    profile, parse_source, fixes = parse_request(request, offline=offline)
+    trace = Trace(request)
     result: Dict = {
-        "request": request, "profile": profile, "parse_source": parse_source, "parse_fixes": fixes,
+        "request": request, "profile": None, "parse_source": None, "parse_fixes": [],
         "retrieved": [], "guide_notes": {}, "answer": None, "answer_source": None,
+        "verification": [], "confidence": None, "confidence_explanation": "",
     }
+
+    started = time.perf_counter()
+    ok, cleaned = validate_request(request)
+    trace.add("validate", ok, started, **({} if ok else {"error": cleaned}))
+
+    started = time.perf_counter()
+    profile, parse_source, fixes = parse_request(request, offline=offline)
+    trace.add("parse", profile is not None, started, source=parse_source, fixes=fixes, profile=profile)
+    result.update(profile=profile, parse_source=parse_source, parse_fixes=fixes)
     if profile is None:  # rejected by the input guardrail
         result["error"] = fixes[0]
+        trace.write(result)
         return result
 
+    started = time.perf_counter()
     songs = load_songs(SONGS_PATH)
     retrieved = retrieve_songs(profile, songs, k=k)
     notes = retrieve_guide_notes(profile, retrieved) if use_guide else {}
+    trace.add("retrieve", True, started, titles=[s["title"] for s, _, _ in retrieved], guide_notes=list(notes))
     result["retrieved"], result["guide_notes"] = retrieved, notes
 
-    answer: Optional[Dict] = None
+    answer, checks, verify_state = None, [], "template"
     if not offline and is_llm_available():
-        try:
-            answer = _parse_llm_answer(ask_llm(build_answer_prompt(request, retrieved, notes)), retrieved)
+        answer, checks, verify_state = _generate_verified(request, retrieved, notes, songs, trace)
+        if answer is not None:
             result["answer_source"] = "llm"
-        except (LLMError, ValueError, KeyError, TypeError):
-            answer = None
     if answer is None:
+        started = time.perf_counter()
         answer = template_answer(retrieved)
+        checks = verify_answer(answer, retrieved, songs)
+        verify_state = "template"
         result["answer_source"] = "template"
-    result["answer"] = answer
+        trace.add("fallback", True, started, reason="offline mode" if offline else "LLM unavailable or answer failed verification")
+
+    result["answer"], result["verification"] = answer, checks
+    result["confidence"], result["confidence_explanation"] = compute_confidence(
+        profile, retrieved, parse_source, verify_state)
+    trace.write(result)
     return result
 
+
+# ---------------------------------------------------------------- CLI
 
 def print_result(result: Dict) -> None:
     print(f"Request: {result['request']}")
@@ -103,7 +287,11 @@ def print_result(result: Dict) -> None:
     print(f"\nAnswer ({result['answer_source']}):")
     for pick in answer["picks"]:
         print(f"  * {pick['title']}: {pick['why']}")
-    print(f"\n  {answer['summary']}\n")
+    print(f"\n  {answer['summary']}")
+    print("\nVerification:")
+    for c in result["verification"]:
+        print(f"  [{'PASS' if c['passed'] else 'FAIL'}] {c['check']}: {c['detail']}")
+    print(f"\nConfidence: {result['confidence']:.2f} ({result['confidence_explanation']})\n")
 
 
 def main() -> None:
