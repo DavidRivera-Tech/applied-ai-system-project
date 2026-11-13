@@ -169,3 +169,46 @@ def test_template_possessive():
     other = {"title": "U", "artist": "LoRoom", "genre": "lofi"}
     picks = assistant.template_answer([(song, 1.0, "r"), (other, 1.0, "r")])["picks"]
     assert "Paper Lanterns' lofi" in picks[0]["why"] and "LoRoom's lofi" in picks[1]["why"]
+
+
+# ---- confidence adjustments for vague and conflicting requests
+
+def test_conflict_penalty_lowers_confidence_by_point_two():
+    result = assistant.run("calm but super high energy metal", offline=True)
+    assert "conflicting cues detected" in result["parse_fixes"]
+    plain = assistant.compute_confidence(result["profile"], result["retrieved"], "offline", "template")[0]
+    assert result["confidence"] == round(plain - 0.2, 2)
+
+
+def test_vague_request_confidence_is_capped():
+    result = assistant.run("something good", offline=True)
+    assert result["profile"] == {"energy": 0.6}
+    assert "vague request: using a broad default" in result["parse_fixes"]
+    assert result["answer"] is not None and result["confidence"] <= 0.5
+
+
+def test_clean_request_confidence_is_not_adjusted():
+    result = assistant.run(REQUEST, offline=True)
+    assert result["confidence"] == assistant.compute_confidence(
+        result["profile"], result["retrieved"], "offline", "template")[0]
+
+
+def test_conflict_penalty_applies_on_the_llm_path_too(monkeypatch):
+    text = "calm but super high energy metal"
+    llm_profile = json.dumps({"genre": "metal", "mood": "aggressive", "energy": 0.9})
+
+    def fake_llm(prompt):
+        return llm_profile if "Convert the music request" in prompt else good_reply(prompt)
+
+    monkeypatch.setattr("src.profile_parser.is_llm_available", lambda: True)
+    monkeypatch.setattr("src.profile_parser.ask_llm", fake_llm)
+    monkeypatch.setattr(assistant, "ask_llm", fake_llm)
+
+    result = assistant.run(text)
+    assert result["parse_source"] == "llm" and result["answer_source"] == "llm"
+    assert "conflicting cues detected" in result["parse_fixes"]
+    plain = assistant.compute_confidence(result["profile"], result["retrieved"], "llm", "first_try")[0]
+    assert result["confidence"] == round(plain - 0.2, 2)
+
+    clean = assistant.run("high energy workout music")
+    assert "conflicting cues detected" not in clean["parse_fixes"]

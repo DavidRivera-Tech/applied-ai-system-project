@@ -74,7 +74,7 @@ def main() -> None:
             print(f"{strategy.name}: {strategy.description}")
         return
 
-    songs = load_songs("data/songs.csv")
+    songs = load_songs("data/songs.csv", verbose=True)
     if args.mode != "balanced":
         print(f"Mode: {args.mode} - {get_strategy(args.mode).description}")
     if args.diversity:

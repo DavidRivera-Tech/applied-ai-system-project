@@ -87,6 +87,8 @@ def check_case(case: dict, result: dict) -> list:
             fails.append(f"picked forbidden genres: {', '.join(bad)}")
     if "min_confidence" in exp and result["confidence"] < exp["min_confidence"]:
         fails.append(f"confidence {result['confidence']:.2f} < {exp['min_confidence']}")
+    if "max_confidence" in exp and result["confidence"] > exp["max_confidence"]:
+        fails.append(f"confidence {result['confidence']:.2f} > {exp['max_confidence']}")
     if "must_not_mention" in exp:
         text = " ".join([p["title"] + " " + p["why"] for p in answer["picks"]] + [answer.get("summary", "")]).lower()
         hit = [s for s in exp["must_not_mention"] if s.lower() in text]
@@ -161,12 +163,20 @@ def main() -> None:
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--offline", action="store_true", help="deterministic, no LLM (default)")
     mode.add_argument("--live", action="store_true", help="use Gemini; pauses 4 s between cases")
+    ap.add_argument("--cases", help="comma-separated case ids to run, e.g. N1,E4,G4 (default: all)")
     args = ap.parse_args()
     live = args.live
     if live and not is_llm_available():
         sys.exit("--live needs GEMINI_API_KEY in the environment or .env")
 
     cases = json.loads(CASES_PATH.read_text(encoding="utf-8"))
+    subset = bool(args.cases)
+    if subset:
+        wanted = [c.strip() for c in args.cases.split(",") if c.strip()]
+        unknown = [w for w in wanted if w not in {c["id"] for c in cases}]
+        if unknown:
+            sys.exit(f"unknown case id(s): {', '.join(unknown)}. Available: {', '.join(c['id'] for c in cases)}")
+        cases = [c for c in cases if c["id"] in wanted]
     rows = []
     for i, case in enumerate(cases):
         if live and i:
@@ -185,15 +195,16 @@ def main() -> None:
     print(table + "\n\n## Summary\n" + summary)
 
     EVIDENCE.mkdir(parents=True, exist_ok=True)
-    name = "eval_results_live.md" if live else "eval_results_offline.md"
+    # A subset run gets its own file so it never overwrites the full-run evidence.
+    name = f"eval_results_{'live' if live else 'offline'}{'_subset' if subset else ''}.md"
     command = "python " + " ".join(["eval/run_eval.py"] + sys.argv[1:])
     doc = (f"# Evaluation results ({'live, Gemini' if live else 'offline, deterministic'})\n\n"
            f"- Command: `{command}`\n- Date: {date.today().isoformat()}\n"
-           f"- Cases: `eval/cases.json` ({len(cases)} cases)\n\n"
+           f"- Cases: `eval/cases.json` ({len(cases)} cases{', subset: ' + args.cases if subset else ''})\n\n"
            f"## Results\n\n{table}\n\n## Summary\n\n{summary}\n")
     (EVIDENCE / name).write_text(doc, encoding="utf-8")
     print(f"\nSaved {EVIDENCE / name}")
-    if live:
+    if live and not subset:
         save_sample_traces(rows)
         print(f"Saved {EVIDENCE / 'sample_traces.md'}")
 

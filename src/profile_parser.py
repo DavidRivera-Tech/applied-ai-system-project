@@ -43,6 +43,20 @@ def _words(text: str) -> set:
     return set(re.findall(r"[a-z0-9&'-]+", text.lower()))
 
 
+GENERIC_WORDS = {
+    "something", "anything", "some", "any", "good", "nice", "great", "cool", "decent", "fine", "new",
+    "whatever", "stuff", "me", "i", "a", "an", "the", "to", "of", "for", "play", "give", "put", "on",
+    "recommend", "suggest", "want", "need", "like", "would", "can", "could", "you", "please", "just",
+    "hear", "listen", "listening", "music", "song", "songs", "tune", "tunes", "track", "tracks",
+}
+
+
+def is_vague(text: str) -> bool:
+    """True for short generic requests such as 'something good' or 'play me something'."""
+    words = re.findall(r"[a-z0-9&'-]+", text.lower())
+    return 0 < len(words) <= 6 and set(words) <= GENERIC_WORDS
+
+
 def validate_request(text) -> Tuple[bool, str]:
     """Input guardrail. Returns (ok, cleaned_text) or (False, error_message)."""
     if not isinstance(text, str):
@@ -52,8 +66,10 @@ def validate_request(text) -> Tuple[bool, str]:
         return False, "Request is empty. Describe the music you want."
     if len(cleaned) > MAX_LEN:
         return False, f"Request is too long ({len(cleaned)} characters; max {MAX_LEN})."
+    if is_vague(cleaned):
+        return True, cleaned
     known = MUSIC_WORDS | set(VOCAB["genres"]) | set(VOCAB["moods"]) | set(VOCAB["mood_tags"])
-    if not (_words(cleaned) & known):
+    if not (_words(correct_typos(cleaned)[0]) & known):
         return False, "That doesn't look like a music request. Try describing a genre, mood or activity."
     return True, cleaned
 
@@ -78,11 +94,58 @@ LOW_ENERGY = {"chill": 0.35, "study": 0.35, "studying": 0.35, "focus": 0.4, "rel
               "rainy": 0.3, "mellow": 0.3, "soft": 0.25, "slow": 0.25, "cozy": 0.3}
 HIGH_ENERGY = {"workout": 0.9, "gym": 0.9, "running": 0.85, "run": 0.85, "party": 0.85,
                "hype": 0.9, "intense": 0.9, "pump": 0.9, "energetic": 0.85, "upbeat": 0.8,
-               "loud": 0.9, "fast": 0.85, "heavy": 0.9, "dance": 0.8}
+               "loud": 0.9, "fast": 0.85, "heavy": 0.9, "dance": 0.8,
+               "angry": 0.85, "blow off steam": 0.9, "pump up": 0.9, "road trip": 0.75, "sunny": 0.75,
+               "high energy": 0.9}
+
+
+TYPO_CUTOFF = 0.75
+MIN_TYPO_LEN = 4
+
+
+def correct_typos(text: str) -> Tuple[str, List[str]]:
+    """Fix single-word typos against the catalog's genre and mood words (difflib, cutoff 0.75).
+
+    Only words the parser doesn't already know are touched. Returns (corrected_text, notes).
+    """
+    targets = sorted({w for w in VOCAB["genres"] + VOCAB["moods"] if re.fullmatch(r"[a-z]+", w)})
+    known = (MUSIC_WORDS | GENERIC_WORDS | set(VOCAB["genres"]) | set(VOCAB["moods"]) | set(VOCAB["mood_tags"])
+             | set(MOOD_SYNONYMS) | set(LOW_ENERGY) | set(HIGH_ENERGY) | set(GENRE_ALIASES))
+    notes: List[str] = []
+
+    def fix(match):
+        word = match.group(0)
+        if len(word) < MIN_TYPO_LEN or word.lower() in known:
+            return word
+        near = difflib.get_close_matches(word.lower(), targets, n=1, cutoff=TYPO_CUTOFF)
+        if not near:
+            return word
+        notes.append(f"typo corrected: '{word}' -> '{near[0]}'")
+        return near[0]
+
+    return re.sub(r"[A-Za-z]+", fix, text), notes
+
+
+def _cues(table: Dict[str, float], low: str, words: set) -> List[float]:
+    """Energy values for every cue in `table` present in the text (phrases match as substrings)."""
+    return [v for k, v in table.items() if (k in low if " " in k else k in words)]
+
+
+def has_conflicting_cues(text: str) -> bool:
+    """True if the request has both a low-energy cue and a high-energy cue (e.g. 'calm' and 'high energy')."""
+    low = correct_typos(text)[0].lower()
+    words = _words(low)
+    return bool(_cues(HIGH_ENERGY, low, words) and _cues(LOW_ENERGY, low, words))
 
 
 def parse_offline(text: str) -> Dict:
     """Rule-based keyword parser. The fallback and the baseline."""
+    return parse_offline_with_notes(text)[0]
+
+
+def parse_offline_with_notes(text: str) -> Tuple[Dict, List[str]]:
+    """Like parse_offline, but also returns notes about typos it corrected."""
+    text, notes = correct_typos(text)
     low = text.lower()
     words = _words(low)
     profile: Dict = {}
@@ -110,9 +173,11 @@ def parse_offline(text: str) -> Dict:
                 profile["mood"] = MOOD_SYNONYMS[word]
                 break
 
-    energies = [v for k, v in HIGH_ENERGY.items() if k in words] or [
-        v for k, v in LOW_ENERGY.items() if k in words
-    ]
+    highs, lows = _cues(HIGH_ENERGY, low, words), _cues(LOW_ENERGY, low, words)
+    if highs and lows:
+        energies = highs + lows  # opposing cues pull toward the middle (the note is added by parse_request)
+    else:
+        energies = highs or lows
     profile["energy"] = round(sum(energies) / len(energies), 2) if energies else 0.5
 
     if re.search(r"\b(no|without)\s+(vocals|lyrics|singing|words)\b|\binstrumental\b", low):
@@ -128,7 +193,7 @@ def parse_offline(text: str) -> Dict:
     tags = [t for t in VOCAB["mood_tags"] if t in words]
     if tags:
         profile["mood_tags"] = tags
-    return profile
+    return profile, notes
 
 
 # ---------------------------------------------------------------- parse_with_llm
@@ -258,6 +323,10 @@ def validate_profile(profile: Dict) -> Tuple[Dict, List[str]]:
 
 # ---------------------------------------------------------------- parse_request
 
+VAGUE_PROFILE = {"energy": 0.6}
+VAGUE_NOTE = "vague request: using a broad default"
+CONFLICT_NOTE = "conflicting cues detected"
+
 def parse_request(text: str, few_shot: bool = True, offline: bool = False) -> Tuple[Optional[Dict], str, List[str]]:
     """Validate, try the LLM, fall back to offline. Returns (profile, source, fixes).
 
@@ -267,14 +336,21 @@ def parse_request(text: str, few_shot: bool = True, offline: bool = False) -> Tu
     if not ok:
         return None, "rejected", [result]
 
+    if is_vague(result):  # nothing to parse: a broad default, no LLM call needed
+        return dict(VAGUE_PROFILE), "default", [VAGUE_NOTE]
+
+    # Checked on the request text itself, so the LLM and offline paths both get it.
+    conflict = [CONFLICT_NOTE] if has_conflicting_cues(result) else []
+
     if not offline and is_llm_available():
         try:
             profile, fixes = validate_profile(parse_with_llm(result, few_shot))
-            return profile, "llm", fixes
+            return profile, "llm", conflict + fixes
         except (LLMError, ValueError):
             pass  # fall through to the offline parser
-    profile, fixes = validate_profile(parse_offline(result))
-    return profile, "offline", fixes
+    raw, notes = parse_offline_with_notes(result)
+    profile, fixes = validate_profile(raw)
+    return profile, "offline", conflict + notes + fixes
 
 
 if __name__ == "__main__":

@@ -22,9 +22,20 @@ class LLMError(RuntimeError):
         self.transient = transient
 
 
+_DAILY_QUOTA_HINTS = ("perday", "per day", "per-day", "daily")
+
+
+def _is_daily_quota(exc: Exception) -> bool:
+    """True if the error text mentions a per-day quota. Read only to classify; never shown or logged."""
+    text = str(exc).lower()
+    return any(hint in text for hint in _DAILY_QUOTA_HINTS)
+
+
 def _is_transient(exc: Exception) -> bool:
     code = getattr(exc, "code", None)
     if isinstance(code, int):
+        if code == 429 and _is_daily_quota(exc):
+            return False  # a daily quota won't recover in seconds, so a retry would be wasted
         return code in (408, 429) or 500 <= code < 600
     name = type(exc).__name__.lower()
     return any(word in name for word in ("timeout", "connect", "remote", "network"))

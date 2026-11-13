@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from src.llm_client import LLMError, ask_llm, is_llm_available
-from src.profile_parser import parse_request, validate_request
+from src.profile_parser import CONFLICT_NOTE, VAGUE_NOTE, parse_request, validate_request
 from src.recommender import get_strategy, load_songs
 from src.retriever import retrieve_guide_notes, retrieve_songs
 
@@ -164,8 +164,16 @@ def max_possible_score(profile: Dict, mode: str = "balanced") -> float:
     return total
 
 
-def compute_confidence(profile: Dict, retrieved: List, parse_source: str, verify_state: str) -> Tuple[float, str]:
-    """0-1 confidence from retrieval strength (50%), parse source (20%), verification (30%)."""
+VAGUE_CONFIDENCE_CAP = 0.5
+CONFLICT_PENALTY = 0.2
+
+
+def compute_confidence(profile: Dict, retrieved: List, parse_source: str, verify_state: str,
+                       fixes: Optional[List[str]] = None) -> Tuple[float, str]:
+    """0-1 confidence from retrieval strength (50%), parse source (20%), verification (30%).
+
+    Parse notes adjust it: a vague request caps it at 0.5, conflicting cues subtract 0.2.
+    """
     top = retrieved[0][1] if retrieved else 0.0
     best = max_possible_score(profile)
     strength = min(1.0, top / best) if best else 0.0
@@ -176,6 +184,13 @@ def compute_confidence(profile: Dict, retrieved: List, parse_source: str, verify
                    "template": "answer built from a template (not LLM-checked)"}[verify_state]
     explanation = (f"top score {top:.2f} of a possible {best:.2f}; request parsed by {parse_source}; "
                    f"verification {verify_text}.")
+    fixes = fixes or []
+    if CONFLICT_NOTE in fixes:
+        score = round(max(0.0, score - CONFLICT_PENALTY), 2)
+        explanation += f" Lowered by {CONFLICT_PENALTY} because the request had conflicting cues."
+    if VAGUE_NOTE in fixes and score > VAGUE_CONFIDENCE_CAP:
+        score = VAGUE_CONFIDENCE_CAP
+        explanation += f" Capped at {VAGUE_CONFIDENCE_CAP} because the request was vague."
     return score, explanation
 
 
@@ -276,7 +291,7 @@ def run(request: str, k: int = 5, offline: bool = False, use_guide: bool = True)
 
     result["answer"], result["verification"] = answer, checks
     result["confidence"], result["confidence_explanation"] = compute_confidence(
-        profile, retrieved, parse_source, verify_state)
+        profile, retrieved, parse_source, verify_state, result["parse_fixes"])
     trace.write(result)
     return result
 

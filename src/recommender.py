@@ -1,4 +1,5 @@
 import csv
+from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass, asdict
 
@@ -62,8 +63,17 @@ class Recommender:
         _, reasons = score_song(_profile_to_prefs(user), asdict(song))
         return "; ".join(reasons)
 
-def load_songs(csv_path: str) -> List[Dict]:
-    """Loads songs from a CSV file into a list of dicts with numeric fields converted."""
+_SONG_CACHE: Dict[str, List[Dict]] = {}
+
+
+def load_songs(csv_path: str, verbose: bool = False) -> List[Dict]:
+    """Loads songs from a CSV file into a list of dicts with numeric fields converted.
+
+    The catalog is read once per path and reused. `verbose` prints the count on the first read.
+    """
+    cache_key = str(Path(csv_path).resolve())
+    if cache_key in _SONG_CACHE:
+        return list(_SONG_CACHE[cache_key])
     int_fields = ("id", "popularity", "release_decade")
     float_fields = (
         "energy",
@@ -87,8 +97,10 @@ def load_songs(csv_path: str) -> List[Dict]:
             song["mood_tags"] = row["mood_tags"].split("|")
             songs.append(song)
 
-    print(f"Loaded songs: {len(songs)}")
-    return songs
+    _SONG_CACHE[cache_key] = songs
+    if verbose:
+        print(f"Loaded songs: {len(songs)}")
+    return list(songs)
 
 class ScoringStrategy:
     """A ranking mode: a name, a one-line description, and a table of weights."""

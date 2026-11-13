@@ -21,3 +21,20 @@ def test_api_key_not_in_llm_error_message(monkeypatch):
     assert FAKE_KEY not in str(info.value)
     assert FAKE_KEY not in repr(info.value)
     assert info.value.__cause__ is None  # raised `from None`, so the original message isn't chained
+
+
+class _FakeAPIError(Exception):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
+def test_daily_quota_429_is_not_transient():
+    msg = "429 RESOURCE_EXHAUSTED. quota exceeded: GenerateRequestsPerDayPerProjectPerModel-FreeTier"
+    assert llm_client._is_transient(_FakeAPIError(429, msg)) is False
+    assert llm_client._is_transient(_FakeAPIError(429, "Daily limit reached")) is False
+
+
+def test_per_minute_429_and_5xx_stay_transient():
+    assert llm_client._is_transient(_FakeAPIError(429, "quota exceeded: RequestsPerMinute")) is True
+    assert llm_client._is_transient(_FakeAPIError(503, "overloaded")) is True
