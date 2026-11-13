@@ -2,7 +2,7 @@
 
 - Command: `python eval/run_eval.py`
 - Date: 2026-11-13
-- Cases: `eval/cases.json` (15 cases)
+- Cases: `eval/cases.json` (20 cases)
 
 ## Results
 
@@ -23,13 +23,19 @@
 | G2 | guardrail | PASS | - |  |
 | G3 | guardrail | PASS | - |  |
 | G4 | guardrail | PASS | 0.74 |  |
+| H1 | holdout | PASS | 0.63 |  |
+| H2 | holdout | PASS | 0.75 |  |
+| H3 | holdout | PASS | 0.73 |  |
+| H4 | holdout | PASS | 0.72 |  |
+| H5 | holdout | PASS | 0.63 |  |
 
 ## Summary
 
-- **15/15 passed** (100%)
+- **20/20 passed** (100%)
 - normal: 6/6 (100%)
 - edge: 5/5 (100%)
 - guardrail: 4/4 (100%)
-- Average confidence (answered cases, n=12): 0.68
-- Answers from the LLM: 0; from the template: 12; rejected (no answer): 3
+- holdout: 5/5 (100%)
+- Average confidence (answered cases, n=17): 0.68
+- Answers from the LLM: 0; from the template: 17; rejected (no answer): 3
 - Cases that needed a retry: 0

@@ -234,5 +234,94 @@
         "Fake Song"
       ]
     }
+  },
+  {
+    "id": "H1",
+    "category": "holdout",
+    "request": "lofi for late night coding",
+    "expectations": {
+      "expect_rejected": false,
+      "genre_in": [
+        "lofi",
+        "synthwave",
+        "ambient"
+      ],
+      "pick_energy_between": [
+        0.0,
+        0.6
+      ]
+    }
+  },
+  {
+    "id": "H2",
+    "category": "holdout",
+    "request": "upbeat dance party with friends",
+    "expectations": {
+      "expect_rejected": false,
+      "pick_energy_between": [
+        0.7,
+        1.0
+      ],
+      "must_not_pick_genres": [
+        "classical",
+        "ambient",
+        "blues",
+        "folk",
+        "lofi"
+      ]
+    }
+  },
+  {
+    "id": "H3",
+    "category": "holdout",
+    "request": "peaceful classical piano for falling asleep",
+    "expectations": {
+      "expect_rejected": false,
+      "genre_in": [
+        "classical"
+      ],
+      "pick_energy_between": [
+        0.0,
+        0.4
+      ]
+    }
+  },
+  {
+    "id": "H4",
+    "category": "holdout",
+    "request": "nostalgic country songs for a long drive",
+    "expectations": {
+      "expect_rejected": false,
+      "genre_in": [
+        "country"
+      ],
+      "mood_in": [
+        "nostalgic",
+        "wistful"
+      ],
+      "pick_energy_between": [
+        0.2,
+        0.7
+      ]
+    }
+  },
+  {
+    "id": "H5",
+    "category": "holdout",
+    "request": "jazz for a rainy cafe afternoon",
+    "expectations": {
+      "expect_rejected": false,
+      "genre_in": [
+        "jazz"
+      ],
+      "pick_energy_between": [
+        0.0,
+        0.6
+      ],
+      "must_not_pick_genres": [
+        "metal",
+        "edm"
+      ]
+    }
   }
 ]
