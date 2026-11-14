@@ -99,7 +99,7 @@ def test_vague_positive_request_shows_note_and_vibe():
 
 def test_vague_negative_request_is_calm_and_reflective():
     plain, _ = scenes(submit(start(), "something bad"))
-    assert "Mood: melancholic · Genre: any · Vibe: calm and low-key" in plain
+    assert "Mood: sad · Genre: any · Vibe: calm and low-key" in plain
     assert "something calm and reflective" in plain
 
 
@@ -134,7 +134,7 @@ def test_the_word_energy_is_never_shown_outside_technical_details():
 
 def test_mixed_signals_and_typos_are_explained_in_plain_sentences():
     plain, _ = scenes(submit(start(), "calm but super high energy metal"))
-    assert "Your request had mixed signals (calm and high-intensity)" in plain
+    assert "Your request had mixed signals (calm and hype)" in plain
     plain, _ = scenes(submit(start(), "chil lofy beats"))
     assert "I fixed a typo: chil → chill" in plain and "I fixed a typo: lofy → lofi" in plain
 

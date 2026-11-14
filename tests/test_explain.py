@@ -11,7 +11,7 @@ def test_vibe_bands():
     assert vibe_name(0.2) == "calm and low-key" and vibe_name(0.34) == "calm and low-key"
     assert vibe_name(0.35) == "relaxed" and vibe_name(0.55) == "relaxed"
     assert vibe_name(0.56) == "upbeat" and vibe_name(0.8) == "upbeat"
-    assert vibe_name(0.81) == "high-intensity" and vibe_name(1.0) == "high-intensity"
+    assert vibe_name(0.81) == "hype" and vibe_name(1.0) == "hype"
 
 
 def test_pick_reasons_cover_genre_and_mood_and_vibe_only_when_hinted():
@@ -40,7 +40,7 @@ def test_no_wording_helper_ever_says_energy():
                  "unknown genre 'polka' -> None"):
         assert "energy" not in plain_fix(note).lower()
     assert plain_fix("typo corrected: 'chil' -> 'chill'") == "I fixed a typo: chil → chill"
-    assert plain_fix("conflicting cues detected") == "Your request had mixed signals (calm and high-intensity)"
+    assert plain_fix("conflicting cues detected") == "Your request had mixed signals (calm and hype)"
 
 
 def test_friendly_why_examples():

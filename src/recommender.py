@@ -51,11 +51,11 @@ class Recommender:
     def recommend(self, user: UserProfile, k: int = 5) -> List[Song]:
         """Returns the k songs that best match the user, highest score first."""
         user_prefs = _profile_to_prefs(user)
-        ranked = sorted(
-            self.songs,
-            key=lambda song: score_song(user_prefs, asdict(song))[0],
-            reverse=True,
-        )
+        def rank_key(song):
+            data = asdict(song)
+            return (-round(score_song(user_prefs, data)[0], 9), -data.get("popularity", 0), data["title"])
+
+        ranked = sorted(self.songs, key=rank_key)
         return ranked[:k]
 
     def explain_recommendation(self, user: UserProfile, song: Song) -> str:
@@ -151,6 +151,24 @@ def get_strategy(name: str) -> ScoringStrategy:
     return STRATEGIES[name]
 
 
+# Moods that feel alike. A different mood in the same family earns half the mood weight.
+MOOD_FAMILIES = {
+    "happy": {"happy", "euphoric"},
+    "intense": {"energetic", "intense", "aggressive", "confident"},
+    "calm": {"chill", "relaxed", "serene", "focused"},
+    "reflective": {"melancholic", "wistful", "bittersweet", "nostalgic", "moody"},
+    "romantic": {"romantic"},
+}
+
+
+def mood_family(mood) -> Optional[str]:
+    """The name of the family a mood belongs to, or None if it belongs to none."""
+    for family, moods in MOOD_FAMILIES.items():
+        if mood in moods:
+            return family
+    return None
+
+
 def score_song(user_prefs: Dict, song: Dict, mode: str = "balanced") -> Tuple[float, List[str]]:
     """Scores one song against user preferences using a ranking mode; returns (score, reasons)."""
     w = get_strategy(mode).weights
@@ -161,9 +179,15 @@ def score_song(user_prefs: Dict, song: Dict, mode: str = "balanced") -> Tuple[fl
         score += w["genre"]
         reasons.append(f"genre match (+{w['genre']:.2f})")
 
-    if "mood" in user_prefs and song["mood"] == user_prefs["mood"]:
-        score += w["mood"]
-        reasons.append(f"mood match (+{w['mood']:.2f})")
+    if "mood" in user_prefs:
+        wanted = user_prefs["mood"]
+        if song["mood"] == wanted:
+            score += w["mood"]
+            reasons.append(f"mood match (+{w['mood']:.2f})")
+        elif mood_family(wanted) is not None and mood_family(wanted) == mood_family(song["mood"]):
+            points = w["mood"] / 2  # same family, different mood: half credit
+            score += points
+            reasons.append(f"related mood: {song['mood']} (+{points:.2f})")
 
     if "energy" in user_prefs:
         target = user_prefs["energy"]
@@ -237,7 +261,8 @@ def recommend_songs(
         score, reasons = score_song(user_prefs, song, mode)
         scored.append((song, score, reasons))
 
-    scored.sort(key=lambda item: item[1], reverse=True)
+    # Highest score first; equal scores go to the more popular song, then alphabetically by title.
+    scored.sort(key=lambda item: (-round(item[1], 9), -item[0].get("popularity", 0), item[0]["title"]))
 
     if not diversity:
         return [(song, score, "; ".join(reasons)) for song, score, reasons in scored[:k]]

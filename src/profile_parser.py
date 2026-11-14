@@ -247,6 +247,8 @@ def build_prompt(text: str, few_shot: bool = True) -> str:
         f"Allowed moods: {', '.join(VOCAB['moods'])}\n"
         f"Allowed mood_tags: {', '.join(VOCAB['mood_tags'])}\n"
         "Use only allowed values; use null for genre or mood if nothing fits.\n"
+        'If the request mixes happy and sad feelings (for example "sad but happy songs"), '
+        'use "bittersweet" as the mood.\n'
     )
     if few_shot:
         prompt += "\n" + FEW_SHOT
@@ -350,6 +352,20 @@ def validate_profile(profile: Dict) -> Tuple[Dict, List[str]]:
 
 # ---------------------------------------------------------------- parse_request
 
+HAPPY_TYPE = ["happy", "joyful", "cheerful", "upbeat feelings"]
+SAD_TYPE = ["sad", "down", "melancholy", "melancholic", "heartbroken"]
+NOTE_BITTERSWEET = "Your request mixed happy and sad, so I went with something bittersweet."
+
+
+def has_happy_and_sad(text: str) -> bool:
+    """True if the request has both a happy-type and a sad-type word (a real mixed feeling)."""
+    low = correct_typos(text)[0].lower()
+    words = _words(low)
+    happy = any((k in low) if " " in k else (k in words) for k in HAPPY_TYPE)
+    sad = any(k in words for k in SAD_TYPE)
+    return happy and sad
+
+
 NOTE_POSITIVE = "Your request was general, so I went with something positive and easygoing."
 NOTE_NEGATIVE = "Your request was general, so I went with something calm and reflective."
 POPULAR_NOTE = "Here are some of the popular songs in our catalog."
@@ -360,6 +376,15 @@ VAGUE_PROFILES = {
     "none": ({"popularity": 100}, POPULAR_NOTE),  # no clue at all: rank by the catalog's popularity score
 }
 CONFLICT_NOTE = "conflicting cues detected"
+
+def _bittersweet(profile: Dict, mixed: bool) -> Dict:
+    """For a mixed happy-and-sad request, force the mood to 'bittersweet' (whatever the parser chose)."""
+    return dict(profile, mood="bittersweet") if mixed else profile
+
+
+def _notes(mixed: bool, fixes: List[str]) -> List[str]:
+    return ([NOTE_BITTERSWEET] if mixed else []) + fixes
+
 
 def _has_no_preferences(profile: Dict) -> bool:
     """True if the profile has nothing to score on (every value missing or empty)."""
@@ -382,20 +407,21 @@ def parse_request(text: str, few_shot: bool = True, offline: bool = False) -> Tu
 
     # Checked on the request text itself, so the LLM and offline paths both get it.
     conflict = [CONFLICT_NOTE] if has_conflicting_cues(result) else []
+    mixed = has_happy_and_sad(result)  # "sad but happy": a real feeling, not a contradiction (no penalty)
 
     if not offline and is_llm_available():
         try:
             profile, fixes = validate_profile(parse_with_llm(result, few_shot))
             if _has_no_preferences(profile):
                 return dict(VAGUE_PROFILES["none"][0]), "llm", [POPULAR_NOTE]
-            return profile, "llm", conflict + fixes
+            return _bittersweet(profile, mixed), "llm", _notes(mixed, conflict + fixes)
         except (LLMError, ValueError):
             pass  # fall through to the offline parser
     raw, notes = parse_offline_with_notes(result)
     profile, fixes = validate_profile(raw)
     if _has_no_preferences(profile):  # nothing usable was understood: fall back to popular songs
         return dict(VAGUE_PROFILES["none"][0]), "offline", notes + [POPULAR_NOTE]
-    return profile, "offline", conflict + notes + fixes
+    return _bittersweet(profile, mixed), "offline", _notes(mixed, conflict + notes + fixes)
 
 
 if __name__ == "__main__":

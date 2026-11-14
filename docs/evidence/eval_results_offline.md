@@ -9,10 +9,10 @@
 | id | category | result | confidence | failure reason |
 |----|----------|--------|------------|----------------|
 | N1 | normal | PASS | 0.74 |  |
-| N2 | normal | PASS | 0.75 |  |
-| N3 | normal | FAIL | 0.72 | picks outside energy [0.0, 0.5]: Cold Window Bars (0.52) |
-| N4 | normal | PASS | 0.75 |  |
-| N5 | normal | PASS | 0.74 |  |
+| N2 | normal | PASS | 0.74 |  |
+| N3 | normal | PASS | 0.72 |  |
+| N4 | normal | PASS | 0.74 |  |
+| N5 | normal | PASS | 0.72 |  |
 | N6 | normal | PASS | 0.75 |  |
 | E1 | edge | PASS | 0.75 |  |
 | E2 | edge | PASS | 0.75 |  |
@@ -23,16 +23,16 @@
 | G2 | guardrail | PASS | - |  |
 | G3 | guardrail | PASS | - |  |
 | G4 | guardrail | PASS | 0.50 |  |
-| H1 | holdout | PASS | 0.58 |  |
+| H1 | holdout | PASS | 0.68 |  |
 | H2 | holdout | PASS | 0.75 |  |
 | H3 | holdout | PASS | 0.75 |  |
-| H4 | holdout | PASS | 0.71 |  |
-| H5 | holdout | PASS | 0.64 |  |
+| H4 | holdout | PASS | 0.72 |  |
+| H5 | holdout | PASS | 0.67 |  |
 
 ## Summary
 
-- **19/20 passed** (95%)
-- normal: 5/6 (83%)
+- **20/20 passed** (100%)
+- normal: 6/6 (100%)
 - edge: 5/5 (100%)
 - guardrail: 4/4 (100%)
 - holdout: 5/5 (100%)

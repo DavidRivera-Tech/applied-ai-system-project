@@ -12,7 +12,7 @@ from src.llm_client import LLMError, ask_llm, is_llm_available
 from src.explain import friendly_why
 from src.profile_parser import CONFLICT_NOTE, VAGUE_NOTES, parse_request, validate_request
 from src.recommender import get_strategy, load_songs
-from src.retriever import retrieve_guide_notes, retrieve_songs
+from src.retriever import add_mood_valence, retrieve_guide_notes, retrieve_songs
 
 SONGS_PATH = "data/songs.csv"
 LOG_PATH = Path(__file__).resolve().parent.parent / "logs" / "traces.jsonl"
@@ -150,7 +150,8 @@ def max_possible_score(profile: Dict, mode: str = "balanced") -> float:
     total = 0.0
     for key, weight_key in (("genre", "genre"), ("mood", "mood"), ("energy", "energy"),
                             ("likes_acoustic", "acoustic"), ("tempo_bpm", "tempo"),
-                            ("instrumental", "instrumental"), ("popularity", "popularity")):
+                            ("instrumental", "instrumental"), ("popularity", "popularity"),
+                            ("valence", "valence")):
         if profile.get(key) is not None:
             total += w[weight_key]
     total += w["mood_tag"] * min(3, len(profile.get("mood_tags") or []))
@@ -254,7 +255,7 @@ def run(request: str, k: int = 5, offline: bool = False, use_guide: bool = True)
     result: Dict = {
         "request": request, "profile": None, "parse_source": None, "parse_fixes": [],
         "retrieved": [], "guide_notes": {}, "answer": None, "answer_source": None,
-        "verification": [], "confidence": None, "confidence_explanation": "",
+        "verification": [], "confidence": None, "confidence_explanation": "", "mood_hint": None,
         "trace_steps": trace.steps,  # same list the log line is built from; filled in as the run proceeds
     }
 
@@ -273,9 +274,14 @@ def run(request: str, k: int = 5, offline: bool = False, use_guide: bool = True)
 
     started = time.perf_counter()
     songs = load_songs(SONGS_PATH)
+    mood_hint = None
+    if parse_source != "default":  # only when the user asked for a mood; defaults never get a derived valence
+        profile, mood_hint = add_mood_valence(profile, songs)
+        result.update(profile=profile, mood_hint=mood_hint)
     retrieved = retrieve_songs(profile, songs, k=k)
     notes = retrieve_guide_notes(profile, retrieved) if use_guide else {}
-    trace.add("retrieve", True, started, titles=[s["title"] for s, _, _ in retrieved], guide_notes=list(notes))
+    trace.add("retrieve", True, started, titles=[s["title"] for s, _, _ in retrieved], guide_notes=list(notes),
+              mood_hint=mood_hint)
     result["retrieved"], result["guide_notes"] = retrieved, notes
 
     answer, checks, verify_state = None, [], "template"

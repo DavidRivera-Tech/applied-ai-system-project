@@ -178,8 +178,8 @@ def test_template_text_is_friendly_with_no_numbers_or_scoring_terms():
 def test_template_uses_vibe_words_only_when_the_user_hinted_a_vibe():
     hinted = assistant.run("chill lofi", offline=True)["answer"]["picks"][0]["why"]
     plain = assistant.run("romantic dinner music", offline=True)["answer"]["picks"][0]["why"]
-    assert any(word in hinted for word in ("calm", "easygoing", "upbeat", "high-intensity"))
-    assert not any(word in plain for word in ("calm", "easygoing", "upbeat", "high-intensity"))
+    assert any(word in hinted for word in ("calm", "easygoing", "upbeat", "hype"))
+    assert not any(word in plain for word in ("calm", "easygoing", "upbeat", "hype"))
 
 
 # ---- confidence adjustments for vague and conflicting requests

@@ -16,7 +16,8 @@ sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)  # the assistant loads data/ files relative to the project root
 
 from src import assistant  # noqa: E402
-from src.explain import confidence_sentence, pick_reasons, plain_fix, vibe_name, wants_vibe  # noqa: E402
+from src.explain import (confidence_sentence, friendly_mood, pick_reasons, plain_fix, scarcity_note,
+                         vibe_name, wants_vibe)  # noqa: E402
 from src.profile_parser import MAX_LEN, POPULAR_NOTE, VAGUE_NOTES  # noqa: E402
 
 # Covers are looked up next to app.py, so it works from any launch directory.
@@ -88,6 +89,9 @@ def show_cards(result: dict) -> None:
     picks = result["answer"]["picks"]
     if POPULAR_NOTE in result["parse_fixes"]:
         st.caption(POPULAR_NOTE)
+    scarcity = scarcity_note(result["profile"], assistant.load_songs(assistant.SONGS_PATH))
+    if scarcity:
+        st.caption(scarcity)
     for col, pick in zip(st.columns(len(picks)), picks):
         song = by_title[pick["title"]]  # verified: every pick is a retrieved song
         with col.container(border=True):
@@ -115,6 +119,10 @@ def process_notes(result: dict) -> list:
 def show_technical_details(result: dict) -> None:
     """The raw data behind the plain-English summary. Raw numbers are fine here."""
     with st.expander("Technical details (raw data)", expanded=False):
+        hint = result.get("mood_hint")
+        if hint:
+            st.write(f"Derived valence target: {hint['valence']:.3f} = average valence of the {hint['songs']} "
+                     f"catalog songs with mood '{hint['mood']}' (computed from songs.csv)")
         st.write("Profile")
         st.json(result["profile"])
         st.write("Top 5 candidates")
@@ -151,7 +159,7 @@ def show_behind_the_scenes(result: dict) -> None:
         st.write("Looks like a music request.")
 
         st.markdown("#### 🧠 What I understood")
-        understood = f"Mood: {profile.get('mood') or 'any'} · Genre: {profile.get('genre') or 'any'}"
+        understood = f"Mood: {friendly_mood(profile.get('mood')) or 'any'} · Genre: {profile.get('genre') or 'any'}"
         if wants_vibe(profile):  # only when the user's words hinted at a vibe
             understood += f" · Vibe: {vibe_name(profile['energy'])}"
         st.write(understood)
@@ -168,7 +176,7 @@ def show_behind_the_scenes(result: dict) -> None:
                 st.write(f"{mark} {text}")
 
         st.markdown("#### 📚 Background knowledge used")
-        st.write(", ".join(result["guide_notes"]) or "None for this request.")
+        st.write(", ".join(friendly_mood(name) for name in result["guide_notes"]) or "None for this request.")
 
         st.markdown("#### 🛡️ Safety checks")
         passed = sum(c["passed"] for c in result["verification"])

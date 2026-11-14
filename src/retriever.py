@@ -2,11 +2,33 @@
 
 import re
 from pathlib import Path
-from typing import Dict, List, Tuple
+from statistics import mean
+from typing import Dict, List, Optional, Tuple
 
 from src.recommender import recommend_songs
 
 GUIDE_PATH = Path(__file__).resolve().parent.parent / "data" / "genre_guide.md"
+
+
+def mood_valence_target(mood: str, songs: List[Dict]) -> Optional[Dict]:
+    """Average valence of the catalog songs with this mood, computed from the data (None if no song has it)."""
+    values = [s["valence"] for s in songs if s["mood"] == mood]
+    if not values:
+        return None
+    return {"mood": mood, "valence": round(mean(values), 3), "songs": len(values)}
+
+
+def add_mood_valence(profile: Dict, songs: List[Dict]) -> Tuple[Dict, Optional[Dict]]:
+    """If the profile has a mood and no valence, add a target valence derived from that mood's catalog songs.
+
+    Returns (profile, hint) where hint describes what was added, or None if nothing was added.
+    """
+    if not profile.get("mood") or "valence" in profile:
+        return profile, None
+    hint = mood_valence_target(profile["mood"], songs)
+    if hint is None:
+        return profile, None
+    return dict(profile, valence=hint["valence"]), hint
 
 
 def load_guide(path: Path = GUIDE_PATH) -> Dict[str, str]:

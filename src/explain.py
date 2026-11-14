@@ -2,26 +2,38 @@
 
 Nothing here changes how songs are scored. It only describes results for people. The word
 "energy" is deliberately never produced: the vibe is described as calm, relaxed, upbeat or
-high-intensity instead.
+hype instead.
 """
 
 import re
 from typing import Dict, List, Optional, Tuple
 
-from src.profile_parser import CONFLICT_NOTE, POPULAR_NOTE, VAGUE_NOTES
+from src.profile_parser import CONFLICT_NOTE, NOTE_BITTERSWEET, POPULAR_NOTE, VAGUE_NOTES
+from src.recommender import mood_family
+
+
+# ---------------------------------------------------------------- friendly mood labels
+
+# Internal catalog label -> the word people see. Add a pair here to rename another mood.
+MOOD_LABELS = {"melancholic": "sad"}
+
+
+def friendly_mood(mood: Optional[str]) -> str:
+    """The user-facing word for a mood. The internal label stays unchanged everywhere else."""
+    return MOOD_LABELS.get(mood, mood) if mood else mood
 
 
 # ---------------------------------------------------------------- vibe words
 
 def vibe_name(level: float) -> str:
-    """The user-facing vibe word for a 0-1 level: calm and low-key / relaxed / upbeat / high-intensity."""
+    """The user-facing vibe word for a 0-1 level: calm and low-key / relaxed / upbeat / hype."""
     if level < 0.35:
         return "calm and low-key"
     if level <= 0.55:
         return "relaxed"
     if level <= 0.8:
         return "upbeat"
-    return "high-intensity"
+    return "hype"
 
 
 def song_adjective(level: float) -> str:
@@ -32,7 +44,7 @@ def song_adjective(level: float) -> str:
         return "easygoing"
     if level <= 0.8:
         return "upbeat"
-    return "high-intensity"
+    return "hype"
 
 
 def wants_vibe(profile: Dict) -> bool:
@@ -81,7 +93,7 @@ def friendly_why(song: Dict, profile: Optional[Dict]) -> str:
 # ---------------------------------------------------------------- reasons for one pick
 
 def pick_reasons(profile: Dict, song: Dict) -> List[Tuple[str, str]]:
-    """Up to three (mark, text) reasons: ✓ matched, ~ close, ✗ didn't match. Vibe only if the user hinted."""
+    """Up to four (mark, text) reasons: ✓ matched, ~ close, ✗ didn't match. Vibe only if the user hinted."""
     if is_popular_profile(profile):
         return [("✓", "One of the most popular songs in our catalog.")]
 
@@ -93,11 +105,19 @@ def pick_reasons(profile: Dict, song: Dict) -> List[Tuple[str, str]]:
             reasons.append(("✗", f"Genre: {song['genre']}, not {profile['genre']}"))
     if profile.get("mood"):
         if song["mood"] == profile["mood"]:
-            reasons.append(("✓", f"Mood: {song['mood']}, like you asked"))
-        elif profile["mood"] in song.get("mood_tags", []):
-            reasons.append(("~", f"Mood: {song['mood']}, with a touch of {profile['mood']}"))
+            reasons.append(("✓", f"Mood: {friendly_mood(song['mood'])}, like you asked"))
+        elif mood_family(profile["mood"]) is not None and mood_family(profile["mood"]) == mood_family(song["mood"]):
+            reasons.append(("~", f"{friendly_mood(song['mood']).capitalize()}, close to {friendly_mood(profile['mood'])}"))
         else:
-            reasons.append(("✗", f"Mood: {song['mood']}, not {profile['mood']}"))
+            reasons.append(("✗", f"Mood: {friendly_mood(song['mood'])}, not {friendly_mood(profile['mood'])}"))
+    if profile.get("mood") and profile.get("valence") is not None and song.get("valence") is not None:
+        gap = song["valence"] - profile["valence"]  # how bright the song sounds vs. the requested mood's usual sound
+        if abs(gap) <= 0.12:
+            reasons.append(("✓", f"Sounds {friendly_mood(profile['mood'])}, like you asked"))
+        else:
+            size = "a bit" if abs(gap) <= 0.25 else "much"
+            reasons.append(("~" if size == "a bit" else "✗",
+                            f"Sounds {size} {'brighter' if gap > 0 else 'darker'} than you asked"))
     if wants_vibe(profile):
         gap = song["energy"] - profile["energy"]
         wanted = vibe_name(profile["energy"])
@@ -112,7 +132,23 @@ def pick_reasons(profile: Dict, song: Dict) -> List[Tuple[str, str]]:
         has = song["instrumentalness"] >= 0.5
         reasons.append(("✓" if wants == has else "✗",
                         "Mostly instrumental, no vocals" if has else "Has vocals"))
-    return reasons[:3] or [("~", "A general match for your request")]
+    return reasons[:4] or [("~", "A general match for your request")]
+
+
+# ---------------------------------------------------------------- "only N like this"
+
+def scarcity_note(profile: Dict, songs: List[Dict]) -> Optional[str]:
+    """A line for when the catalog has fewer than 3 songs matching BOTH the requested genre and mood."""
+    genre, mood = profile.get("genre"), profile.get("mood")
+    if not genre or not mood:
+        return None  # only a genre, or only a mood: nothing to report
+    n = sum(1 for s in songs if s["genre"] == genre and s["mood"] == mood)
+    if n >= 3:
+        return None
+    if n == 0:
+        return f"We don’t have any {friendly_mood(mood)} {genre} songs in our catalog, so these are the closest matches."
+    return (f"We only have {n} {friendly_mood(mood)} {genre} song{'s' if n != 1 else ''} in our catalog, "
+            "so the other picks are the closest matches.")
 
 
 # ---------------------------------------------------------------- fix notes and confidence
@@ -123,8 +159,8 @@ def plain_fix(note: str) -> str:
     if typo:
         return f"I fixed a typo: {typo.group(1)} → {typo.group(2)}"
     if note == CONFLICT_NOTE:
-        return "Your request had mixed signals (calm and high-intensity)"
-    if note in VAGUE_NOTES:
+        return "Your request had mixed signals (calm and hype)"
+    if note in VAGUE_NOTES or note == NOTE_BITTERSWEET:
         return note
     return "I adjusted one detail to match what our catalog knows."
 
