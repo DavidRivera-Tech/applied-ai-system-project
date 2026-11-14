@@ -1,85 +1,225 @@
-# AI Interactions Log
+# AI Interactions: AIMA
 
-> **Stretch features only.** Only fill in the sections that apply to stretch features you attempted. If you did not attempt a stretch feature, leave its section blank or delete it. This file is not required for the core project.
+## Purpose
 
----
+This file shows how the agent works step by step. It has real traces from runs, the key prompts, and the design decisions I made while building it with AI help. For my overall reflection on working with AI, see the [AI collaboration section of the model card](model_card.md#ai-collaboration).
 
-## Agentic Workflow (SF8)
+## Agent workflow
 
-> Document your experience using an AI agent (e.g., Cursor Agent, Claude, Copilot) to make multi-step changes autonomously.
+This is what `run()` in [src/assistant.py](src/assistant.py) does for each request. The diagram is in [diagrams/architecture.mmd](diagrams/architecture.mmd). Steps marked **Decision** are where the agent picks a path.
 
-**What task did you give the agent?**
+1. **Input guardrail.** `validate_request` rejects empty text, text over 500 characters, and text with no music words. Decision: a rejected request stops here with an error message and no further steps except logging.
+2. **Vague-request check.** `parse_request` calls `vague_kind` first. Decision: a general request such as "something good" gets a broad default profile and a plain-English note, with no Gemini call. A positive request defaults to mood happy, a negative one to melancholic, and no clue at all ranks by popularity.
+3. **Parse.** Decision: if offline mode is off and a Gemini key is available, `parse_with_llm` runs the few-shot prompt. If Gemini fails or returns bad JSON, the offline rule-based parser takes over. The trace records the source as `llm`, `offline`, or `default`.
+4. **Validate the profile.** `validate_profile` snaps values to the allowed vocabulary and drops unknown keys. It records every change in `fixes`. The parse step also adds the bittersweet and conflicting-cues notes.
+5. **Retrieve.** `add_mood_valence` adds a valence target for the mood. `retrieve_songs` scores the 60-song catalog and returns the top 5. `retrieve_guide_notes` pulls the matching genre and mood notes from the guide.
+6. **Generate.** Decision: with offline mode off and a key available, `_generate_verified` builds the answer prompt and calls Gemini. `_call_llm` retries once if the error is transient (a timeout, 429, or 5xx). Otherwise the agent skips to step 9.
+7. **Verify.** `verify_answer` runs 4 checks: `titles_match_retrieved`, `no_duplicate_picks`, `text_names_only_retrieved`, and `correct_pick_count`.
+8. **Retry with feedback.** Decision: if any check fails on the first attempt, the agent sends the problems back to Gemini and generates once more. If the second answer also fails, the answer is dropped.
+9. **Template fallback.** Decision: if there is no answer by now (offline mode, no key, an API failure, or two failed verifications), `template_answer` builds one from the top 3 songs. The same 4 checks run on it.
+10. **Confidence.** `compute_confidence` combines match strength (50%), parse source (20%), and verification (30%). A vague request caps it at 0.5, and conflicting cues subtract 0.2.
+11. **Trace logging.** `Trace.write` appends one JSON line to `logs/traces.jsonl`. This also happens for a rejected request.
 
-I asked Claude in VS Code to score six extra song attributes (tempo, valence, popularity, decade, mood tags, instrumentalness) without changing any existing result. The job had several steps: change the scoring function, fix a bug in the energy rule, add a seventh test profile, and prove the first six profiles still came out the same.
+## Agent traces
 
-**Prompts used:**
+### Trace 1: a wrong title format, caught and fixed by a retry
 
-**S1** (extra attributes and a seventh profile):
+This is a live Gemini run from Nov 11 for "sad songs for a rainy day". The full capture is in [phase3_live_runs.md](docs/evidence/phase3_live_runs.md). The first block is the end of what the user saw after the retry.
 
-> In src/recommender.py, extend score_song so these new song attributes add points ONLY when the user_prefs dict includes the matching key (so existing profiles score exactly the same):
->
-> "tempo_bpm": up to +0.5 for closeness (full at 0 BPM difference, 0 at 60+ BPM apart)
-> "valence": up to +0.5 for closeness
-> "popularity": up to +0.5 for closeness (on a 0-100 scale)
-> "decade": +0.5 if release_decade matches (it's stored as an int like 2020)
-> "mood_tags": +0.25 per shared tag, max 3 tags
-> "instrumental": True/False preference, up to +0.5 using instrumentalness
->
-> Each one adds a reason string. Clamp energy closeness at 0 so it can't go negative. Then add a 7th profile to main.py called "Extended: Late-Night Focus" that uses several of these keys, and confirm the first 6 profiles' output is unchanged by comparing against profile_output.txt.
+```
+Answer (llm):
+  * Crossroads Lament: This sorrowful blues track features soulful guitar work perfect for quiet reflection.
+  * Nocturne in Blue Hour: Its gentle classical piano creates a deeply melancholic atmosphere.
+  * Library Rain: Mellow lofi keys add a cozy, relaxing backdrop for watching the rain.
 
-**What did the agent generate or change?**
+  Here are three cozy, melancholic tracks to keep you company on a rainy day.
 
-- `src/recommender.py`: six new rules in `score_song`, each guarded by `if key in user_prefs`, each adding a reason string such as `tempo 80 BPM vs target 78 (+0.48)`. Energy closeness now uses `max(0.0, ...)`.
-- `src/main.py`: a seventh profile, "Extended: Late-Night Focus" (lofi, focused, energy 0.4, likes acoustic, tempo 78, valence 0.55, instrumental, mood tags `focused` and `calm`, decade 2020). Focus Flow came out first at 7.30.
-- It ran `python -m src.main` and `pytest` to check its own work.
+Verification:
+  [PASS] titles_match_retrieved: all picks were retrieved
+  [PASS] no_duplicate_picks: no duplicates
+  [PASS] summary_names_only_retrieved: summary is clean
 
-**What did you verify or fix manually?**
+Confidence: 0.73 (top score 2.69 of a possible 3.50; request parsed by llm; verification passed only after a retry.)
+```
 
-- **Profiles 1–6 unchanged.** I had Claude compare the new output against `profile_output.txt`. The first six profiles matched exactly. I repeated the same check after the Strategy refactor and again after adding `--diversity` and `--table`, and the default output still matched each time.
-- **The max-score mismatch (7.75 vs 8.25).** Claude told me the new maximum score was 7.75. I added it up myself and got 8.25: 5.0 for the four core rules, 2.5 for the five +0.5 rules, and 0.75 for mood tags. Claude agreed it had made an arithmetic slip. Before writing 8.25 into the docs I had it check again. A made-up "perfect" song with every key set scored exactly 8.25, and the same song with only the four core keys scored 5.0. The README and model card now say 5.0 for the core rules and 8.25 with every optional key.
+This is the trace line for the same run. The `...` marks where I trimmed the `validate`, `parse`, `retrieve`, and first `generate` steps.
 
----
+```json
+{
+  "timestamp": "2026-11-11T21:43:49.166582+00:00",
+  "request": "sad songs for a rainy day",
+    ...
+      "step": "generate",
+      "ok": true,
+      "ms": 13741.7,
+      "attempt": 1
+    },
+    {
+      "step": "verify",
+      "ok": false,
+      "ms": 2.9,
+      "attempt": 1,
+      "checks": {
+        "titles_match_retrieved": false,
+        "no_duplicate_picks": true,
+        "summary_names_only_retrieved": true
+      },
+      "problems": [
+        "titles_match_retrieved: not retrieved: ['\"Crossroads Lament\" by Delta Jack', '\"Nocturne in Blue Hour\" by Elena Vasquez', '\"Library Rain\" by Paper Lanterns']"
+      ]
+    },
+    {
+      "step": "retry",
+      "ok": true,
+      "ms": 0.0,
+      "reason": "titles_match_retrieved: not retrieved: ['\"Crossroads Lament\" by Delta Jack', '\"Nocturne in Blue Hour\" by Elena Vasquez', '\"Library Rain\" by Paper Lanterns']"
+    },
+    {
+      "step": "generate",
+      "ok": true,
+      "ms": 25020.3,
+      "attempt": 1
+    },
+    {
+      "step": "verify",
+      "ok": true,
+      "ms": 0.5,
+      "attempt": 2,
+      "checks": {
+        "titles_match_retrieved": true,
+        "no_duplicate_picks": true,
+        "summary_names_only_retrieved": true
+      },
+      "problems": []
+    }
+  ],
+  "errors": [],
+  "answer_source": "llm",
+  "confidence": 0.73
+}
+```
 
-## Design Pattern (SF10)
+This shows the whole safety loop. Gemini first wrote its picks as `"Crossroads Lament" by Delta Jack`. That is a natural way to write it, but it is not an exact catalog title. `titles_match_retrieved` failed, the `retry` step recorded the exact problem, and the second answer passed. Confidence came out at 0.73 because verification only passed after a retry. I captured this on the 22-song version when the guardrail had 3 checks. It has 4 now. The `"attempt": 1` on the second `generate` step is the old name for what is now `api_try`.
 
-> Document how AI helped you choose or implement a design pattern.
+### Trace 2: a rejected request
 
-**Which design pattern did you use?**
+This one takes a different path. It comes from [sample_traces.md](docs/evidence/sample_traces.md), a live evaluation run from 2026-11-13. The empty request never reaches retrieval or Gemini.
 
-The Strategy pattern, combined with a weights table. Each ranking mode (balanced, genre-boost, mood-first, energy-focused) is a small class that holds only a name, a one-line description, and a dict of weights.
+```json
+{
+  "request": "",
+  "answer_source": null,
+  "confidence": null,
+  "steps": [
+    {
+      "step": "validate",
+      "ok": false,
+      "ms": 0.1,
+      "error": "Request is empty. Describe the music you want."
+    },
+    {
+      "step": "parse",
+      "ok": false,
+      "ms": 0.0,
+      "source": "rejected",
+      "fixes": [
+        "Request is empty. Describe the music you want."
+      ],
+      "profile": null
+    }
+  ],
+  "errors": []
+}
+```
 
-**How did AI help you brainstorm or implement it?**
+The input guardrail fails in `validate`, `parse` records the source as `rejected` with no profile, and the run ends. There is no `retrieve`, `generate`, or `verify` step. For a path with a transient API error and a retry, see the N2 trace in the same file.
 
-**S2a** (brainstorming the options):
+### How to see a trace yourself
 
-> I want multiple ranking modes (e.g. balanced, genre-heavy, mood-first, energy-focused) that a user can switch in main.py. Looking at recommender.py, what design patterns could keep this modular without copying score_song for each mode? Compare 2–3 options and recommend one.
+- Every run appends one JSON line to `logs/traces.jsonl`. The log files are not committed.
+- `run()` returns the same steps as `result["trace_steps"]`. Each step has `step`, `ok`, and `ms`, plus extra fields such as `source`, `profile`, `titles`, `checks`, and `problems`.
+- The Behind the scenes panel in the app shows the same steps in plain English.
+- More traces: [sample_traces.md](docs/evidence/sample_traces.md) and [phase3_live_runs.md](docs/evidence/phase3_live_runs.md).
 
-Claude compared three options. Option A was a weights table passed into `score_song`. Option B was rules as small functions, with a mode as a list of (rule, weight). Option C was one class per mode. It recommended A, because my four modes differ only in how much each rule is worth, and said B would make sense later if the rules grew different shapes.
+## Key prompts
 
-**My decision.** I didn't pick just one. I chose to combine A and C: use Strategy classes that only hold a weights table. That keeps `score_song` as one function while giving every mode a name and a description that `--list-modes` can print.
+### Parser prompt
 
-**S2b** (building it):
+[src/profile_parser.py](src/profile_parser.py), function `build_prompt`, which `parse_with_llm` calls. The instructions:
 
-> Build the ranking modes as a Strategy pattern combined with your Option A: a base ScoringStrategy class with a name, a one-line description, and a weights dict (balanced = exactly today's weights). Subclasses override only the weights they change:
->
-> "genre-boost": genre 4.0, mood 0.5, energy 1.0
-> "mood-first": mood 3.0, genre 1.0
-> "energy-focused": energy 4.0, genre 0.5, mood 0.5
->
-> Add a STRATEGIES registry dict and get_strategy(name) that raises ValueError for unknown names. score_song and recommend_songs take mode="balanced" by default, and reason strings show the weighted points (e.g. "genre match (+4.00)"). The Recommender class keeps "balanced" so the tests don't change. In main.py, add argparse flags: --mode (choices from STRATEGIES, default balanced) and --list-modes (prints each mode's name and description). Skip normalization. Confirm the default output still matches profile_output.txt for profiles 1–6.
+```python
+"Convert the music request into a JSON taste profile. Reply with ONLY a JSON object, "
+"no prose and no code fences.\n"
+...
+'Include "energy" ONLY if the request mentions pace, intensity, or an activity '
+'(for example "chill", "workout", "road trip", "to fall asleep"). A mood alone, such as '
+'"happy" or "romantic", is not a hint: leave "energy" out.\n'
+f"Allowed genres: {', '.join(VOCAB['genres'])}\n"
+f"Allowed moods: {', '.join(VOCAB['moods'])}\n"
+f"Allowed mood_tags: {', '.join(VOCAB['mood_tags'])}\n"
+"Use only allowed values; use null for genre or mood if nothing fits.\n"
+```
 
-Claude wrote the classes, the registry, and the `--mode` and `--list-modes` flags. Its first attempt never ran because of a shell quoting error, so it moved the edit scripts into files and re-ran them. After that, everything applied cleanly.
+Two of the five few-shot examples (`FEW_SHOT`):
 
-**How does the pattern appear in your final code?**
+```
+Request: "romantic songs for date night"
+{"mood": "romantic", "mood_tags": ["romantic"]}
 
-- `ScoringStrategy` in `src/recommender.py` is the base class. Its weights are exactly the original ones, so `balanced` behaves as before.
-- `GenreBoostStrategy`, `MoodFirstStrategy`, and `EnergyFocusedStrategy` override only the weights they change.
-- `STRATEGIES` is the registry, and `get_strategy(name)` raises `ValueError` for an unknown mode.
-- `score_song(..., mode="balanced")` and `recommend_songs(..., mode="balanced")` look up the weights, and the reason strings show the weighted points.
-- `src/main.py` has `--mode` and `--list-modes`.
-- `tests/test_recommender.py` has a test for each mode's #1 result and one for the unknown-mode error.
+Request: "happy jazz"
+{"genre": "jazz", "mood": "happy"}
+```
 
-**What I verified.**
+The "energy only if there is a hint" rule is how I stopped Gemini from inventing preferences. The allowed lists come from the catalog, so Gemini can only name genres and moods that exist. Both examples I picked leave energy out.
 
-- **Same output in default mode.** The default output matched `profile_output.txt` for profiles 1–6, as in the first task.
-- **"Three #1 songs, not four."** When I asked Claude to save the mode comparison table for the README, I described it as showing four different #1 songs. The table for Classical but High Energy actually shows three: balanced and genre-boost both give Nocturne in Blue Hour, mood-first gives Crossroads Lament, and energy-focused gives Storm Runner. Claude caught it, and the README says three.
+### Answer-generation prompt
+
+[src/assistant.py](src/assistant.py), function `build_answer_prompt`:
+
+```python
+"You are a friendly music assistant. Recommend songs ONLY from the candidate list below.",
+...
+"Background notes:"
+...
+f"Pick {N_PICKS} different candidate songs and explain why each fits in 2-3 friendly sentences "
+"total across the answer. Use exact titles from the list, and do not mention any other song. "
+"Reply with ONLY JSON in this shape:",
+'{"picks": [{"title": "...", "why": "..."}], "summary": "..."}',
+```
+
+This is the grounding part. Gemini only sees the retrieved songs and the guide notes, and it is told to use exact titles and name no other song. The output checks then test that rule, because a prompt alone does not guarantee it.
+
+### Retry-with-feedback prompt
+
+[src/assistant.py](src/assistant.py), function `_generate_verified`:
+
+```python
+prompt = (base + "\n\nYour previous reply was rejected for these problems:\n- "
+          + "\n- ".join(problems)
+          + "\nFix them. Use only exact titles from the candidate list, no duplicates, "
+            "and reply with ONLY the JSON.")
+```
+
+It reuses the original prompt and adds the exact problems from the failed checks. Naming the problem (for example, which titles did not match) is what let the second answer in Trace 1 pass.
+
+## Design decision log
+
+| Decision | Who suggested it | What I chose | Why |
+|---|---|---|---|
+| Offline fallback for every step | Claude (planning chat) | Kept | The free tier allowed about 20 calls a day and I hit 429 and 503 errors. Tests and the main eval run free. |
+| No invented energy | Found by me while testing | Set energy only when the request hints at a vibe | I removed the 0.5 default and the eval dropped to 18/20. The default had been hiding how thin the catalog was. |
+| Thin catalog | Claude suggested a "weak pick" note | Rejected it and expanded the catalog from 22 to 60 songs | The point is 3 good picks, so I fixed the cause and did not warn about it. |
+| Mood families | Claude, for thin-catalog requests | Agreed and kept them | A different mood in the same family earns half the mood weight, so related moods get partial credit. |
+| Valence hint | Claude, after "sad rock" returned upbeat songs | Agreed and kept it | The hint pulls results toward the right feel. |
+| Vibe words instead of "energy" ("hype" for the highest level) | Me | Plain words in the UI | The user never sees the word energy. |
+| Vague requests | Me (the popular-songs idea) | A positive request defaults to happy, a negative one to melancholic with a calm, reflective note, and no clue ranks by popularity with a note | A vague request still deserves a useful answer. Confidence is capped at 0.5. |
+| Happy plus sad | Me | Becomes bittersweet with no penalty. Conflicting vibe cues get a 0.2 confidence penalty | Mixed feelings are real. Contradictory cues are a sign the request is unclear. |
+| Typo length guard | A UI test written by Claude in VS Code | Typo fixes only apply to words of similar length | The test caught "roman" becoming "romantic". |
+| Simpler UI | Me | Removed the RAG toggle, example buttons, the How it works sidebar, and the why text on cards | Cards show cover and title. Details go in Behind the scenes. |
+| Few-shot stays the default parser | Result of my comparison | Kept few-shot | It followed my design rules more closely, although 3 cases is too small to call a winner ([parser_comparison_subset.md](docs/evidence/parser_comparison_subset.md)). |
+
+## When the AI was wrong
+
+- **The confidence drop.** Claude in the planning chat said a drop in confidence from 0.97 to 0.73 was caused by the retry. Claude in VS Code corrected it. They were different requests. The retry explains 0.15 of the gap and the weaker top match explains the rest.
+- **Gemini's title format.** Gemini wrote `"Crossroads Lament" by Delta Jack` instead of the exact title. The `titles_match_retrieved` check caught it (Trace 1).
+- **The typo matcher.** My typo fix turned "roman" into "romantic", so a sentence about the Roman Empire passed as a music request. A UI test caught it, and I added the length guard.
