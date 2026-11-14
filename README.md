@@ -420,7 +420,3 @@ Problem-solving taught me to go after the cause. When a request didn't have enou
 ## What this project says about me as an AI engineer
 
 I want to build AI systems I can trust, not just ones that look good in a demo. That's why I don't take the AI's word for anything. Every answer gets checked against the catalog, and every step has an offline backup for when the AI fails. The part I'm proudest of is the guardrail that caught Gemini's wrong title format on a live run, and an evaluation that shows its failures instead of hiding them. It went 11/15 on the first try, dipped to 18/20 when I removed a default that was covering up a problem, and I clearly label the live result as coming from an earlier version. I work one small step at a time, test each change, and measure before I say something works. And when a fix broke something else, I wrote it down and fixed that too.
-
-## Optional demo video
-
-Loom walkthrough: TODO (optional)
