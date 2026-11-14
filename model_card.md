@@ -106,17 +106,48 @@ Removing the invented energy exposed the thin catalog: two cases failed because 
 
 **Few-shot vs zero-shot**
 
-TODO: results from eval/compare_parsers.py (Nov 14)
+This compares the parser prompt with and without example pairs (a request followed by the JSON profile I want). Zero-shot gives Gemini only the instructions. Few-shot adds the examples. The current prompt has five examples.
 
-This compares the parser prompt with and without example pairs (a request followed by the JSON profile I want). Zero-shot gives Gemini only the instructions. Few-shot adds the examples. The current prompt has five examples. A first attempt at this comparison was inconclusive because of rate limits ([parser_comparison_ratelimited.md](docs/evidence/parser_comparison_ratelimited.md)).
+My first full attempt at this comparison failed. 23 of 24 calls hit 429 or 5xx errors, so it showed nothing ([parser_comparison_ratelimited.md](docs/evidence/parser_comparison_ratelimited.md)).
+
+I reran it on a smaller subset of 5 requests, which is 10 calls. Three of those failed with 503 server errors. That left 3 head-to-head cases. Both versions returned valid JSON and the expected mood every time they worked, and `validate_profile` needed no fixes. The difference was discipline. On "romantic dinner music", zero-shot invented an energy value of 0.3 and added 3 mood tags. Few-shot left energy out and used 1 tag, which matches my "no invented preferences" rule and the offline parser. Few-shot also scored 3/4 on "energy in target range". The one miss was that same romantic request, where leaving energy out is the intended behavior. So the metric and my design rule disagree there. Both Gemini versions missed the genre on the study request, where the offline parser guesses lofi.
+
+Three cases is too small to call a winner. Few-shot followed my design rules more closely, so it stays the default.
+
+| Request | Zero-shot profile | Few-shot profile | What differed |
+|---|---|---|---|
+| something chill to study to, no vocals | `{"genre":null,"mood":"chill","energy":0.2,"instrumental":true,"mood_tags":["calm","focused","laid-back"]}` | `{"genre":null,"mood":"chill","energy":0.3,"instrumental":true,"mood_tags":["focused"]}` | Zero-shot added 3 tags and few-shot added 1. Both left genre null. |
+| romantic dinner music | `{"genre":null,"mood":"romantic","energy":0.3,"mood_tags":["romantic","smooth","tender"]}` | `{"genre":null,"mood":"romantic","mood_tags":["romantic"]}` | Zero-shot invented energy 0.3 and added 3 tags. Few-shot left energy out and used 1 tag. |
+| angry music to blow off steam | `{"genre":null,"mood":"aggressive","energy":0.9,"mood_tags":["aggressive","furious"]}` | `{"genre":null,"mood":"aggressive","energy":0.9,"mood_tags":["aggressive","furious"]}` | Nothing. The profiles are identical. |
+
+Full results: [parser_comparison_subset.md](docs/evidence/parser_comparison_subset.md). The failed first attempt is [parser_comparison_ratelimited.md](docs/evidence/parser_comparison_ratelimited.md).
 
 ## RAG impact
 
 **With vs without the genre guide**
 
-TODO: results from eval/compare_rag.py (Nov 14)
+These are preliminary results from one live run on 2026-11-14. I will update this section after I rerun the comparison.
 
-This compares answers written with the retrieved genre guide notes in the prompt against answers written without them. Both use the same retrieved songs. So far only an offline test of the script has run. Both sides used the same template there, so it says nothing yet about the guide.
+This compares answers written with the retrieved genre guide notes in the prompt against answers written without them. Both use the same retrieved songs. I ran 3 requests, each answered with and without the guide ([rag_comparison.md](docs/evidence/rag_comparison.md)). Two of the 6 answers fell back to the template after 503 errors. Each failure used 2 calls, the first try plus the retry. That means only "romantic dinner music" is a fair pair, because it is the only request where both answers came from Gemini.
+
+The summary table in that file averages in the template answers, so the fair pair below is the cleaner comparison.
+
+**The fair pair: "romantic dinner music"**
+
+| | With guide | Without guide |
+|---|---|---|
+| Corazón de Fuego | "warm Latin rhythms that add a passionate touch" | "Warm Latin rhythms set an intimate tone" |
+| Afterglow Avenue | "tender pop melodies" | "Smooth pop melodies" |
+| Velvet Hours | "smooth R&B grooves" | "Soft R&B vibes" |
+| Guide words used | 5 | 3 |
+| Avg explanation length | 13.0 words | 10.3 words |
+| Confidence | 0.90 | 0.90 |
+
+**What I found.** The guide made the explanations a little more specific and closer to my genre notes. The answers without it were still accurate, because Gemini already knows what these genres sound like. Confidence did not change. It was 0.90 on both sides of the fair pair, and the 0.81 average in the summary is the same for both columns. That makes sense. Confidence comes from match strength, parser source, and verification, and none of those use the guide.
+
+**A possible side effect.** With the guide, Gemini described Crossroads Lament as "bittersweet". In `data/songs.csv` that song is tagged melancholic, with the tags sorrowful and soulful. The blues note in `data/genre_guide.md` says people listen to blues when they want something "soulful, reflective, or bittersweet". So the word came from the genre note, not from the song. Grounding can pull in words that fit the genre but not the specific song. My output guardrail checks song titles, not whether a description fits the song. I only saw this once, so I can't say how often it happens.
+
+**A limit of the measure.** "Guide words used" is crude. It counts any content word of 5 or more letters that appears in both the guide notes and the explanation. That includes plain words like "brings" and "hours". Three requests, one fair pair, and a rough metric are not enough to say how much the guide helps.
 
 ## What surprised me while testing reliability
 

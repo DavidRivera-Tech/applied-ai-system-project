@@ -373,7 +373,10 @@ The first seven rows are real offline runs of the current code (`python -m src.a
 - **The "roman" → "romantic" typo bug.** My typo matcher turned an off-topic sentence about the Roman Empire into a music request. A UI test caught it, and the fix limits corrections to words of similar length.
 - **Fixes tuned on test cases need a holdout.** After fixing the first 15 cases, I wrote 5 new holdout cases the fixes hadn't seen; all 5 passed on the first run. Five cases is a small check, not proof.
 
-TODO: few-shot vs zero-shot and RAG comparison results (Nov 14)
+### Prompt and RAG comparisons
+
+- **Parser: few-shot vs zero-shot.** On 3 head-to-head cases, both Gemini prompts returned valid JSON and the right mood. Zero-shot invented an energy value and extra mood tags for "romantic dinner music", and few-shot did not, so few-shot stays the default. Three other calls failed with 503 errors, so three cases is too small to call a winner. See [parser_comparison_subset.md](docs/evidence/parser_comparison_subset.md) and the [model card section](model_card.md#specialization).
+- **RAG: with vs without the genre guide (preliminary).** Two of the 6 answers fell back to the template after 503 errors, so only "romantic dinner music" is a fair pair. With the guide, the explanations used more of my genre-note words (5 vs 3) and were more specific, but the answers without it were still accurate. I will update this after I rerun it. See [rag_comparison.md](docs/evidence/rag_comparison.md) and the [model card section](model_card.md#rag-impact).
 
 ## Design decisions and trade-offs
 
@@ -381,7 +384,7 @@ TODO: few-shot vs zero-shot and RAG comparison results (Nov 14)
 
 **Gemini understands and explains; my code decides.** Gemini only turns the request into a profile and writes the explanations. The ranking, the checks, and the confidence score are plain code, so they're deterministic and testable, and a wrong Gemini answer can be caught instead of trusted.
 
-**An offline fallback for reliability.** The free Gemini tier allowed about 20 requests per day on my account, and I hit 429 rate-limit errors in my own runs. Any API can fail, too. Every step has an offline path, so the system degrades to rules and templates instead of breaking, and the tests and the main evaluation run free and deterministically.
+**An offline fallback for reliability.** The free Gemini tier allowed about 20 requests per day on my account, and I hit 429 rate-limit and 503 server errors in my own runs. Any API can fail, too. Every step has an offline path, so the system degrades to rules and templates instead of breaking, and the tests and the main evaluation run free and deterministically.
 
 **No invented preferences.** The vibe (energy) is only set when the user's words hint at it. If a request says only "happy songs", the profile has no energy at all, and scoring skips it. Defaults are limited to clearly vague requests, and the page says when one was used.
 
