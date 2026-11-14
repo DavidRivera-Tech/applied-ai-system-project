@@ -1,0 +1,111 @@
+%% AIMA (AI Music Assistant) - system architecture, matching the code as implemented.
+%% Solid arrows = data/control flow. Dotted arrows = reads from a data source, or a check.
+%% Dashed pink boxes = where humans and tests check results.
+flowchart TB
+    classDef input fill:#dbeafe,stroke:#2563eb,color:#0b2a5b
+    classDef step fill:#ecfdf5,stroke:#059669,color:#064e3b
+    classDef llm fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+    classDef check fill:#ffedd5,stroke:#ea580c,color:#7c2d12
+    classDef data fill:#fef9c3,stroke:#ca8a04,color:#713f12
+    classDef output fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef log fill:#f1f5f9,stroke:#64748b,color:#0f172a
+    classDef human fill:#ffffff,stroke:#be185d,color:#831843,stroke-dasharray:6 4
+
+    %% ---------------- Input ----------------
+    UI["Streamlit UI<br/>app.py<br/>type a request, press Enter"]:::input
+    CLI["Command line<br/>src/assistant.py main()"]:::input
+
+    %% ---------------- Pipeline ----------------
+    subgraph Pipeline["Pipeline: run() in src/assistant.py"]
+        G1["1. Input guardrail<br/>validate_request (profile_parser.py)<br/>empty, too long, or not about music"]:::check
+        V{"Vague request?<br/>vague_kind"}:::step
+        DEF["Broad default profile<br/>positive: happy, relaxed<br/>negative: sad, calm<br/>no clue: most popular songs"]:::step
+        MIX["2. Understand the request: text checks<br/>typo fixes, mixed-signals note,<br/>happy + sad = bittersweet<br/>(profile_parser.py)"]:::step
+        LLMQ{"Gemini available<br/>and not offline mode?"}:::step
+        GP["Gemini parser<br/>parse_with_llm<br/>few-shot prompt"]:::llm
+        OP["Offline keyword rules<br/>parse_offline<br/>also the fallback if Gemini fails"]:::step
+        VP["3. Validate the profile<br/>validate_profile<br/>values must exist in the catalog<br/>(empty profile = popular songs)"]:::check
+        HINT["4. Retrieve: mood hint<br/>target valence = average of that mood<br/>(retriever.py, asked moods only)"]:::step
+        SC["Score every song, keep top 5<br/>recommender.py: mood families,<br/>valence, popularity tie-break"]:::step
+        RAG["Genre guide notes: the RAG lookup<br/>retrieve_guide_notes (retriever.py)"]:::step
+        GENQ{"Offline mode<br/>or no Gemini key?"}:::step
+        GEN["5. Generate the answer<br/>Gemini, grounded only on the<br/>retrieved songs and notes"]:::llm
+        TPL["Template answer<br/>template_answer (explain.py)<br/>friendly sentences, no AI"]:::step
+        VER["6. Output guardrail: 4 checks<br/>verify_answer: real songs, no repeats,<br/>no made-up songs in text, right count"]:::check
+        PASS{"All 4 checks pass?"}:::check
+        RETRY["Retry once with feedback<br/>the problems are sent back to Gemini"]:::llm
+        CONF["7. Confidence score<br/>compute_confidence: match strength,<br/>parser, verification, vague cap, mixed signals"]:::step
+    end
+
+    %% ---------------- Output ----------------
+    REJ["Friendly message, no cards<br/>app.py"]:::output
+    CARDS["3 album-cover cards<br/>app.py, plus the<br/>'only N like this' line"]:::output
+    BTS["Behind the scenes<br/>app.py, wording from explain.py<br/>steps, reasons, checks, confidence"]:::output
+    CLIOUT["Printed answer<br/>print_result (CLI)"]:::output
+
+    %% ---------------- Logging ----------------
+    LOG["logs/traces.jsonl<br/>one trace per run<br/>(Trace.write)"]:::log
+
+    %% ---------------- Data ----------------
+    subgraph Data["Data"]
+        CSV[("data/songs.csv<br/>60 songs")]:::data
+        GUIDE[("data/genre_guide.md<br/>genre and mood notes")]:::data
+        COV[("assets/covers<br/>one image per song")]:::data
+    end
+
+    %% ---------------- Testing and human review ----------------
+    subgraph Testing["Testing & human review"]
+        PT["pytest suite<br/>fake LLM, no API calls<br/>tests/"]:::human
+        EV["Evaluation harness<br/>eval/run_eval.py<br/>20 cases incl. 5 holdout"]:::human
+        CASES["Human-written test cases<br/>eval/cases.json"]:::human
+        GREV["Human review of the<br/>AI-written genre guide"]:::human
+        USER["User reads<br/>Behind the scenes"]:::human
+    end
+
+    %% ---------------- Flow ----------------
+    UI --> G1
+    CLI --> G1
+    G1 -- "rejected" --> REJ
+    G1 -- "passed" --> V
+    V -- "yes" --> DEF
+    V -- "no" --> MIX
+    DEF --> SC
+    MIX --> LLMQ
+    LLMQ -- "yes" --> GP
+    LLMQ -- "no" --> OP
+    GP -- "error or bad JSON" --> OP
+    GP --> VP
+    OP --> VP
+    VP --> HINT
+    HINT --> SC
+    SC --> RAG
+    RAG --> GENQ
+    GENQ -- "no" --> GEN
+    GENQ -- "yes" --> TPL
+    GEN -- "API error" --> TPL
+    GEN --> VER
+    TPL --> VER
+    VER --> PASS
+    PASS -- "yes" --> CONF
+    PASS -- "no, first try" --> RETRY
+    RETRY -- "second attempt" --> GEN
+    PASS -- "no, after the retry" --> TPL
+    CONF --> CARDS
+    CONF --> BTS
+    CONF --> CLIOUT
+    CONF --> LOG
+    G1 -.-> LOG
+
+    %% ---------------- Data reads ----------------
+    CSV -.-> |"vocabulary"| VP
+    CSV -.-> |"mood averages"| HINT
+    CSV -.-> |"candidates"| SC
+    GUIDE -.-> RAG
+    COV -.-> CARDS
+
+    %% ---------------- Checks by tests and people ----------------
+    PT -.-> |"checks"| Pipeline
+    EV -.-> |"runs run()"| Pipeline
+    CASES -.-> EV
+    GREV -.-> |"reviews"| GUIDE
+    BTS -.-> |"explains the result"| USER
