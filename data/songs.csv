@@ -21,3 +21,41 @@ id,title,artist,genre,mood,energy,tempo_bpm,valence,danceability,acousticness,po
 20,Fuego en la Calle,Los Soleros,latin,energetic,0.86,102,0.88,0.92,0.15,86,2020,festive|passionate,0.01,0.12,0.20
 21,Afterglow Avenue,Neon Echo,pop,romantic,0.68,108,0.72,0.76,0.20,74,2020,dreamy|romantic,0.02,0.05,0.11
 22,Blue Smoke Lounge,Marcus Hale,jazz,moody,0.44,72,0.42,0.48,0.84,46,1950,smoky|brooding,0.58,0.04,0.52
+23,Late Study Quartet,The Midnight Five,jazz,focused,0.33,84,0.55,0.45,0.86,44,2000,focused|mellow,0.78,0.03,0.18
+24,Static Hearts,Voltline,rock,romantic,0.62,76,0.58,0.48,0.30,72,2010,romantic|tender,0.04,0.05,0.22
+25,Highway Thunder,Red Mile,rock,energetic,0.89,148,0.70,0.62,0.08,68,2000,driving|energetic,0.05,0.06,0.30
+26,Glass Lake Morning,Orbit Bloom,ambient,serene,0.18,58,0.62,0.30,0.94,41,2010,serene|calm,0.96,0.03,0.06
+27,Signal Garden,Quiet Satellites,ambient,focused,0.30,70,0.52,0.38,0.80,39,2020,focused|dreamy,0.92,0.03,0.08
+28,Arcade Summer 1986,Chrome Tiger,synthwave,nostalgic,0.70,112,0.68,0.74,0.15,63,2010,nostalgic|warm,0.60,0.04,0.12
+29,Laser Horizon,Neon Echo,synthwave,euphoric,0.84,120,0.78,0.80,0.10,71,2020,euphoric|driving,0.45,0.04,0.14
+30,Last Bus Home,Indigo Parade,indie pop,bittersweet,0.50,104,0.52,0.60,0.45,62,2010,bittersweet|reflective,0.03,0.04,0.15
+31,Paper Plane Parade,The Kite Club,indie pop,happy,0.72,126,0.86,0.78,0.38,65,2020,joyful|carefree,0.02,0.05,0.16
+32,Corner Office,Kid Meridian,hip-hop,confident,0.74,94,0.60,0.82,0.10,79,2020,swagger|defiant,0.00,0.33,0.12
+33,Cold Window Bars,Mesa Verse,hip-hop,melancholic,0.52,82,0.32,0.70,0.22,61,2010,reflective|sorrowful,0.00,0.36,0.10
+34,Neon Tidal Wave,Atlas Drift,edm,euphoric,0.92,126,0.82,0.88,0.05,77,2020,euphoric|uplifting,0.35,0.05,0.24
+35,Overdrive Protocol,Circuit Saints,edm,energetic,0.95,138,0.74,0.86,0.03,73,2020,energetic|motivated,0.40,0.06,0.20
+36,Small Town Goodbye,Hollis Creek,country,bittersweet,0.44,92,0.48,0.52,0.72,58,2010,bittersweet|wistful,0.02,0.04,0.20
+37,Gravel Road Letters,June Carver,country,wistful,0.40,88,0.50,0.50,0.80,54,2000,wistful|warm,0.02,0.04,0.25
+38,Elegy for Winter Strings,Elena Vasquez,classical,melancholic,0.20,56,0.22,0.18,0.96,38,1800,melancholic|sorrowful,0.97,0.03,0.12
+39,Morning Prelude in Gold,Aurelia Strings,classical,serene,0.25,72,0.60,0.25,0.95,42,1700,serene|uplifting,0.95,0.03,0.10
+40,Forge of Ashes,Black Meridian,metal,aggressive,0.96,168,0.20,0.40,0.02,59,2010,furious|aggressive,0.15,0.08,0.30
+41,Blackout Tempest,Grave Signal,metal,intense,0.93,160,0.28,0.42,0.04,57,2020,dark|driving,0.10,0.09,0.28
+42,Midnight Crown,Jaylen Monroe,r&b,confident,0.60,90,0.64,0.76,0.25,76,2020,smooth|swagger,0.01,0.09,0.12
+43,Almost Ours,Nia Bloom,r&b,bittersweet,0.46,80,0.46,0.66,0.35,70,2020,bittersweet|tender,0.01,0.07,0.11
+44,Sunset Riddim,Sunny Roots,reggae,relaxed,0.50,74,0.78,0.76,0.32,66,2000,laid-back|warm,0.06,0.07,0.21
+45,Old Kingston Radio,Dub Harbor,reggae,nostalgic,0.48,72,0.70,0.72,0.40,55,1980,nostalgic|laid-back,0.10,0.06,0.33
+46,Letters from the Orchard,Maple & Pine,folk,wistful,0.30,90,0.48,0.42,0.92,47,2010,wistful|tender,0.05,0.03,0.22
+47,Campfire Morning,Wren Hollow,folk,happy,0.55,108,0.80,0.58,0.88,50,2020,joyful|warm,0.04,0.04,0.28
+48,Midnight Train Blues,Delta Jack,blues,moody,0.42,70,0.34,0.46,0.70,49,1960,brooding|soulful,0.12,0.05,0.40
+49,Rolling Thunder Shuffle,Big Ruth Harper,blues,confident,0.66,118,0.62,0.64,0.55,53,1970,swagger|soulful,0.08,0.06,0.42
+50,Corazón de Fuego,Los Soleros,latin,romantic,0.68,96,0.72,0.84,0.28,80,2020,passionate|romantic,0.01,0.08,0.16
+51,Noche de Tambores,Ritmo Sur,latin,aggressive,0.85,124,0.60,0.88,0.20,68,2010,festive|driving,0.02,0.10,0.24
+52,Ashes in the Wind,Grave Signal,metal,melancholic,0.72,96,0.18,0.35,0.10,48,2020,dark|sorrowful,0.20,0.07,0.26
+53,Dawn Patrol,Red Mile,rock,intense,0.90,150,0.52,0.58,0.06,62,2010,aggressive|driving,0.04,0.07,0.31
+54,Polaroid Summer,The Kite Club,indie pop,nostalgic,0.58,110,0.66,0.64,0.40,57,2010,nostalgic|carefree,0.03,0.04,0.17
+55,Quiet Hours,Paper Lanterns,lofi,focused,0.36,76,0.56,0.58,0.82,55,2020,focused|calm,0.88,0.03,0.07
+56,Velvet Sky Lullaby,Quiet Satellites,ambient,serene,0.15,54,0.58,0.22,0.95,36,2020,serene|dreamy,0.97,0.02,0.05
+57,Hometown Fireworks,The Kite Club,pop,euphoric,0.86,124,0.88,0.84,0.12,74,2020,euphoric|joyful,0.01,0.05,0.18
+58,Rainy Bus Window,LoRoom,lofi,wistful,0.32,74,0.44,0.54,0.80,52,2020,wistful|cozy,0.86,0.03,0.08
+59,Saltwater Goodbye,Wren Hollow,folk,bittersweet,0.36,84,0.50,0.44,0.90,46,2010,bittersweet|reflective,0.05,0.04,0.24
+60,Street Hype Anthem,Mesa Verse,hip-hop,energetic,0.88,100,0.68,0.86,0.08,75,2020,energetic|defiant,0.00,0.34,0.18

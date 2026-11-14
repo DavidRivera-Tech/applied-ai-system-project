@@ -101,3 +101,6 @@ Peaceful, quiet music that feels still and open. People use it for meditation, s
 
 ## wistful
 Gently sad, longing music with a hint of warmth. It suits looking back, quiet walks, and reflective evenings.
+
+## bittersweet
+Music that mixes happy and sad at the same time, like a warm memory with a touch of loss. People listen to it at goodbyes, endings, graduations, and when looking back on good times that are over.
