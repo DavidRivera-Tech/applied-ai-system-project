@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from src.llm_client import LLMError, ask_llm, is_llm_available
-from src.profile_parser import CONFLICT_NOTE, VAGUE_NOTE, parse_request, validate_request
+from src.explain import friendly_why
+from src.profile_parser import CONFLICT_NOTE, VAGUE_NOTES, parse_request, validate_request
 from src.recommender import get_strategy, load_songs
 from src.retriever import retrieve_guide_notes, retrieve_songs
 
@@ -77,17 +78,9 @@ def build_answer_prompt(request: str, retrieved: List, notes: Dict[str, str]) ->
     return "\n".join(lines)
 
 
-def _possessive(name: str) -> str:
-    return f"{name}'" if name.endswith("s") else f"{name}'s"
-
-
-def template_answer(retrieved: List) -> Dict:
-    """Fallback answer built from the top retrieved songs and their reasons."""
-    picks = []
-    for song, _, reasons in retrieved[:N_PICKS]:
-        why = reasons.replace(";", ",") if reasons else "it was one of the closest matches"
-        picks.append({"title": song["title"],
-                      "why": f"{_possessive(song['artist'])} {song['genre']} track fits because: {why}."})
+def template_answer(retrieved: List, profile: Optional[Dict] = None) -> Dict:
+    """Fallback answer built from the top retrieved songs: friendly sentences, no scoring jargon."""
+    picks = [{"title": song["title"], "why": friendly_why(song, profile)} for song, _, _ in retrieved[:N_PICKS]]
     titles = ", ".join(p["title"] for p in picks)
     return {"picks": picks, "summary": f"Based on your request, the best matches in the catalog are: {titles}."}
 
@@ -157,7 +150,7 @@ def max_possible_score(profile: Dict, mode: str = "balanced") -> float:
     total = 0.0
     for key, weight_key in (("genre", "genre"), ("mood", "mood"), ("energy", "energy"),
                             ("likes_acoustic", "acoustic"), ("tempo_bpm", "tempo"),
-                            ("instrumental", "instrumental")):
+                            ("instrumental", "instrumental"), ("popularity", "popularity")):
         if profile.get(key) is not None:
             total += w[weight_key]
     total += w["mood_tag"] * min(3, len(profile.get("mood_tags") or []))
@@ -166,6 +159,14 @@ def max_possible_score(profile: Dict, mode: str = "balanced") -> float:
 
 VAGUE_CONFIDENCE_CAP = 0.5
 CONFLICT_PENALTY = 0.2
+
+
+def match_percent(profile: Dict, score: float) -> int:
+    """A song's score as a 0-100 percentage of the best possible score for this profile (0 if nothing to score)."""
+    best = max_possible_score(profile)
+    if best <= 0:
+        return 0
+    return max(0, min(100, round(100 * score / best)))
 
 
 def compute_confidence(profile: Dict, retrieved: List, parse_source: str, verify_state: str,
@@ -188,7 +189,7 @@ def compute_confidence(profile: Dict, retrieved: List, parse_source: str, verify
     if CONFLICT_NOTE in fixes:
         score = round(max(0.0, score - CONFLICT_PENALTY), 2)
         explanation += f" Lowered by {CONFLICT_PENALTY} because the request had conflicting cues."
-    if VAGUE_NOTE in fixes and score > VAGUE_CONFIDENCE_CAP:
+    if any(note in fixes for note in VAGUE_NOTES) and score > VAGUE_CONFIDENCE_CAP:
         score = VAGUE_CONFIDENCE_CAP
         explanation += f" Capped at {VAGUE_CONFIDENCE_CAP} because the request was vague."
     return score, explanation
@@ -254,6 +255,7 @@ def run(request: str, k: int = 5, offline: bool = False, use_guide: bool = True)
         "request": request, "profile": None, "parse_source": None, "parse_fixes": [],
         "retrieved": [], "guide_notes": {}, "answer": None, "answer_source": None,
         "verification": [], "confidence": None, "confidence_explanation": "",
+        "trace_steps": trace.steps,  # same list the log line is built from; filled in as the run proceeds
     }
 
     started = time.perf_counter()
@@ -283,7 +285,7 @@ def run(request: str, k: int = 5, offline: bool = False, use_guide: bool = True)
             result["answer_source"] = "llm"
     if answer is None:
         started = time.perf_counter()
-        answer = template_answer(retrieved)
+        answer = template_answer(retrieved, profile)
         checks = verify_answer(answer, retrieved, songs)
         verify_state = "template"
         result["answer_source"] = "template"

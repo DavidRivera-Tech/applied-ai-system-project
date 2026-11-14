@@ -122,19 +122,38 @@ def test_recommendations_sorted_high_to_low(songs):
     assert scores == sorted(scores, reverse=True)
 
 
-@pytest.mark.parametrize(
-    "mode, expected_top",
-    [
-        ("balanced", "Nocturne in Blue Hour"),
-        ("genre-boost", "Nocturne in Blue Hour"),
-        ("mood-first", "Crossroads Lament"),
-        ("energy-focused", "Storm Runner"),
-    ],
-)
-def test_mode_changes_classical_high_energy_number_one(songs, mode, expected_top):
-    results = recommend_songs(CLASSICAL_HIGH_ENERGY, songs, k=5, mode=mode)
+# The four ranking modes, checked by behavior (not by song names) so they survive catalog changes.
+# The request is a clash on purpose: classical + melancholic, but with a very high energy target.
 
-    assert results[0][0]["title"] == expected_top
+def test_balanced_mode_returns_results_sorted_high_to_low(songs):
+    results = recommend_songs(CLASSICAL_HIGH_ENERGY, songs, k=5, mode="balanced")
+    scores = [score for _, score, _ in results]
+    assert len(results) == 5 and scores == sorted(scores, reverse=True)
+
+
+def test_genre_boost_number_one_is_in_the_requested_genre(songs):
+    assert any(s["genre"] == "classical" for s in songs)  # the catalog must offer the genre for this to mean anything
+    top = recommend_songs(CLASSICAL_HIGH_ENERGY, songs, k=5, mode="genre-boost")[0][0]
+    assert top["genre"] == "classical"
+
+
+def test_mood_first_number_one_has_the_requested_mood(songs):
+    assert any(s["mood"] == "melancholic" for s in songs)
+    top = recommend_songs(CLASSICAL_HIGH_ENERGY, songs, k=5, mode="mood-first")[0][0]
+    assert top["mood"] == "melancholic"
+
+
+def test_energy_focused_number_one_has_the_closest_energy(songs):
+    target = CLASSICAL_HIGH_ENERGY["energy"]
+    top = recommend_songs(CLASSICAL_HIGH_ENERGY, songs, k=5, mode="energy-focused")[0][0]
+    closest_gap = min(abs(s["energy"] - target) for s in songs)
+    assert abs(top["energy"] - target) == pytest.approx(closest_gap)
+
+
+def test_every_mode_returns_sorted_results(songs):
+    for mode in ("balanced", "genre-boost", "mood-first", "energy-focused"):
+        scores = [score for _, score, _ in recommend_songs(CLASSICAL_HIGH_ENERGY, songs, k=5, mode=mode)]
+        assert scores == sorted(scores, reverse=True), mode
 
 
 def test_unknown_mode_raises_value_error(songs):

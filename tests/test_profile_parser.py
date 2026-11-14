@@ -91,12 +91,28 @@ def test_typo_only_request_passes_validation():
     assert validate_request("chil lofy")[0] is True
 
 
-def test_vague_request_gets_broad_default():
-    for text in ("something good", "play me something"):
+def test_vague_positive_request_is_happy_and_relaxed():
+    for text in ("something good", "nice", "fun", "great", "feel-good"):
         assert validate_request(text)[0] is True
         profile, source, fixes = parse_request(text, offline=True)
-        assert profile == {"energy": 0.6} and "genre" not in profile
-        assert fixes == ["vague request: using a broad default"]
+        assert profile == {"mood": "happy", "energy": 0.45}, text  # 0.45 is in the 'relaxed' band
+        assert fixes == ["Your request was general, so I went with something positive and easygoing."]
+
+
+def test_vague_negative_request_is_melancholic_and_calm():
+    for text in ("something bad", "rough day", "feeling down"):
+        assert validate_request(text)[0] is True
+        profile, source, fixes = parse_request(text, offline=True)
+        assert profile == {"mood": "melancholic", "energy": 0.25}, text  # 0.25 is in the 'calm' band
+        assert fixes == ["Your request was general, so I went with something calm and reflective."]
+
+
+def test_no_clue_request_ranks_by_popularity():
+    for text in ("play me something", "anything"):
+        assert validate_request(text)[0] is True
+        profile, source, fixes = parse_request(text, offline=True)
+        assert profile == {"popularity": 100}
+        assert fixes == ["Here are some of the popular songs in our catalog."]
 
 
 def test_non_music_question_is_still_rejected():
@@ -113,3 +129,50 @@ def test_conflicting_cues_are_noted_once():
     _, _, fixes = parse_request("calm but super high energy metal", offline=True)
     assert fixes.count("conflicting cues detected") == 1
     assert "conflicting cues detected" not in parse_request("high energy workout music", offline=True)[2]
+
+
+def test_typo_correction_does_not_turn_a_different_word_into_a_mood():
+    text = "tell me about the history of the roman empire and its many emperors"
+    assert correct_typos(text) == (text, [])  # 'roman' is not a typo of 'romantic'
+    assert validate_request(text)[0] is False
+
+
+# ---- no invented energy
+
+def test_no_energy_without_a_vibe_or_activity_hint():
+    for text in ("happy songs", "romantic dinner music", "sad songs", "jazz", "some pop"):
+        profile, _, _ = parse_request(text, offline=True)
+        assert "energy" not in profile, (text, profile)
+
+
+def test_energy_only_when_words_hint_at_it():
+    cases = {"chill beats": (0, 0.35), "music to sleep to": (0, 0.35), "relaxing jazz": (0, 0.35),
+             "low vibes only, songs": (0, 0.35), "laid-back pop songs": (0.35, 0.55),
+             "easygoing songs": (0.35, 0.55), "upbeat pop": (0.55, 0.8), "party songs": (0.8, 1),
+             "road trip songs": (0.55, 0.8), "workout music": (0.8, 1), "hype songs": (0.8, 1),
+             "high energy songs": (0.8, 1)}
+    for text, (lo, hi) in cases.items():
+        energy = parse_request(text, offline=True)[0]["energy"]
+        assert lo <= energy <= hi, (text, energy)
+
+
+def test_unusable_request_falls_back_to_popular_songs_not_an_empty_profile():
+    profile, _, fixes = parse_request("cool beats", offline=True)
+    assert profile == {"popularity": 100} and fixes == ["Here are some of the popular songs in our catalog."]
+
+
+def test_gemini_prompt_makes_energy_optional_and_examples_match():
+    from src.profile_parser import FEW_SHOT, build_prompt
+    prompt = build_prompt("happy songs")
+    assert 'optionally "energy"' in prompt and 'Include "energy" ONLY' in prompt
+    examples = [line for line in FEW_SHOT.splitlines() if line.startswith("{")]
+    assert any('"energy"' in e for e in examples) and any('"energy"' not in e for e in examples)
+    assert 'Request: "happy jazz"' in FEW_SHOT
+
+
+def test_empty_llm_profile_also_falls_back_to_popular_songs(monkeypatch):
+    monkeypatch.setattr("src.profile_parser.is_llm_available", lambda: True)
+    monkeypatch.setattr("src.profile_parser.ask_llm", lambda prompt: '{"genre": null, "mood": null}')
+    profile, source, fixes = parse_request("cool beats")
+    assert profile == {"popularity": 100} and source == "llm"
+    assert fixes == ["Here are some of the popular songs in our catalog."]

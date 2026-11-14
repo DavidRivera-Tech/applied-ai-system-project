@@ -44,17 +44,29 @@ def _words(text: str) -> set:
 
 
 GENERIC_WORDS = {
-    "something", "anything", "some", "any", "good", "nice", "great", "cool", "decent", "fine", "new",
-    "whatever", "stuff", "me", "i", "a", "an", "the", "to", "of", "for", "play", "give", "put", "on",
-    "recommend", "suggest", "want", "need", "like", "would", "can", "could", "you", "please", "just",
-    "hear", "listen", "listening", "music", "song", "songs", "tune", "tunes", "track", "tracks",
+    "something", "anything", "some", "any", "new", "whatever", "stuff", "me", "i", "a", "an", "the", "to",
+    "of", "for", "play", "give", "put", "on", "recommend", "suggest", "want", "need", "like", "would",
+    "can", "could", "you", "please", "just", "hear", "listen", "listening", "music", "song", "songs",
+    "tune", "tunes", "track", "tracks", "feel", "feeling", "day",
 }
+POSITIVE_WORDS = {"good", "nice", "great", "cool", "decent", "fine", "fun", "feel-good", "awesome"}
+NEGATIVE_WORDS = {"bad", "rough", "down", "awful", "terrible"}
+
+
+def vague_kind(text: str) -> Optional[str]:
+    """Classify a short generic request: 'positive', 'negative', 'none' (no clue at all), or None if it isn't vague."""
+    words = re.findall(r"[a-z0-9&'-]+", text.lower())
+    if not (0 < len(words) <= 6) or not set(words) <= (GENERIC_WORDS | POSITIVE_WORDS | NEGATIVE_WORDS):
+        return None
+    if set(words) & NEGATIVE_WORDS:
+        return "negative"
+    if set(words) & POSITIVE_WORDS:
+        return "positive"
+    return "none"
 
 
 def is_vague(text: str) -> bool:
-    """True for short generic requests such as 'something good' or 'play me something'."""
-    words = re.findall(r"[a-z0-9&'-]+", text.lower())
-    return 0 < len(words) <= 6 and set(words) <= GENERIC_WORDS
+    return vague_kind(text) is not None
 
 
 def validate_request(text) -> Tuple[bool, str]:
@@ -89,9 +101,12 @@ MOOD_SYNONYMS = {
     "love": "romantic", "date": "romantic", "dark": "moody", "night": "moody",
     "calm": "serene", "peaceful": "serene",
 }
+# Words that hint at a vibe or activity. Mood words alone ("happy", "sad") are deliberately absent:
+# with no hint the profile gets no energy at all and scoring skips it.
 LOW_ENERGY = {"chill": 0.35, "study": 0.35, "studying": 0.35, "focus": 0.4, "relax": 0.3,
-              "relaxing": 0.3, "sleep": 0.15, "calm": 0.25, "peaceful": 0.25, "sad": 0.3,
-              "rainy": 0.3, "mellow": 0.3, "soft": 0.25, "slow": 0.25, "cozy": 0.3}
+              "relaxing": 0.3, "sleep": 0.15, "calm": 0.25, "peaceful": 0.25,
+              "rainy": 0.3, "mellow": 0.3, "soft": 0.25, "slow": 0.25, "cozy": 0.3,
+              "low vibes": 0.25, "laid-back": 0.45, "laid back": 0.45, "easygoing": 0.45}
 HIGH_ENERGY = {"workout": 0.9, "gym": 0.9, "running": 0.85, "run": 0.85, "party": 0.85,
                "hype": 0.9, "intense": 0.9, "pump": 0.9, "energetic": 0.85, "upbeat": 0.8,
                "loud": 0.9, "fast": 0.85, "heavy": 0.9, "dance": 0.8,
@@ -101,6 +116,7 @@ HIGH_ENERGY = {"workout": 0.9, "gym": 0.9, "running": 0.85, "run": 0.85, "party"
 
 TYPO_CUTOFF = 0.75
 MIN_TYPO_LEN = 4
+MAX_TYPO_LEN_DIFF = 2
 
 
 def correct_typos(text: str) -> Tuple[str, List[str]]:
@@ -118,7 +134,8 @@ def correct_typos(text: str) -> Tuple[str, List[str]]:
         if len(word) < MIN_TYPO_LEN or word.lower() in known:
             return word
         near = difflib.get_close_matches(word.lower(), targets, n=1, cutoff=TYPO_CUTOFF)
-        if not near:
+        # A typo is about the same length as the word it garbles; 'roman' is not a typo of 'romantic'.
+        if not near or abs(len(near[0]) - len(word)) > MAX_TYPO_LEN_DIFF:
             return word
         notes.append(f"typo corrected: '{word}' -> '{near[0]}'")
         return near[0]
@@ -178,7 +195,8 @@ def parse_offline_with_notes(text: str) -> Tuple[Dict, List[str]]:
         energies = highs + lows  # opposing cues pull toward the middle (the note is added by parse_request)
     else:
         energies = highs or lows
-    profile["energy"] = round(sum(energies) / len(energies), 2) if energies else 0.5
+    if energies:  # no hint in the words -> no energy key at all
+        profile["energy"] = round(sum(energies) / len(energies), 2)
 
     if re.search(r"\b(no|without)\s+(vocals|lyrics|singing|words)\b|\binstrumental\b", low):
         profile["instrumental"] = True
@@ -207,6 +225,12 @@ Request: "mellow acoustic evening, nothing with vocals"
 
 Request: "aggressive loud music to lift weights to"
 {"genre": "metal", "mood": "aggressive", "energy": 0.95, "tempo_bpm": 160, "mood_tags": ["driving"]}
+
+Request: "romantic songs for date night"
+{"mood": "romantic", "mood_tags": ["romantic"]}
+
+Request: "happy jazz"
+{"genre": "jazz", "mood": "happy"}
 """
 
 
@@ -214,8 +238,11 @@ def build_prompt(text: str, few_shot: bool = True) -> str:
     prompt = (
         "Convert the music request into a JSON taste profile. Reply with ONLY a JSON object, "
         "no prose and no code fences.\n"
-        'Keys: "genre" (string), "mood" (string), "energy" (number 0-1), and optionally '
+        'Keys: "genre" (string), "mood" (string), and optionally "energy" (number 0-1), '
         '"likes_acoustic" (bool), "tempo_bpm" (number), "instrumental" (bool), "mood_tags" (list of strings).\n'
+        'Include "energy" ONLY if the request mentions pace, intensity, or an activity '
+        '(for example "chill", "workout", "road trip", "to fall asleep"). A mood alone, such as '
+        '"happy" or "romantic", is not a hint: leave "energy" out.\n'
         f"Allowed genres: {', '.join(VOCAB['genres'])}\n"
         f"Allowed moods: {', '.join(VOCAB['moods'])}\n"
         f"Allowed mood_tags: {', '.join(VOCAB['mood_tags'])}\n"
@@ -323,9 +350,21 @@ def validate_profile(profile: Dict) -> Tuple[Dict, List[str]]:
 
 # ---------------------------------------------------------------- parse_request
 
-VAGUE_PROFILE = {"energy": 0.6}
-VAGUE_NOTE = "vague request: using a broad default"
+NOTE_POSITIVE = "Your request was general, so I went with something positive and easygoing."
+NOTE_NEGATIVE = "Your request was general, so I went with something calm and reflective."
+POPULAR_NOTE = "Here are some of the popular songs in our catalog."
+VAGUE_NOTES = {NOTE_POSITIVE, NOTE_NEGATIVE, POPULAR_NOTE}  # any of these caps confidence at 50%
+VAGUE_PROFILES = {
+    "positive": ({"mood": "happy", "energy": 0.45}, NOTE_POSITIVE),
+    "negative": ({"mood": "melancholic", "energy": 0.25}, NOTE_NEGATIVE),
+    "none": ({"popularity": 100}, POPULAR_NOTE),  # no clue at all: rank by the catalog's popularity score
+}
 CONFLICT_NOTE = "conflicting cues detected"
+
+def _has_no_preferences(profile: Dict) -> bool:
+    """True if the profile has nothing to score on (every value missing or empty)."""
+    return not any(v not in (None, [], "") for v in profile.values())
+
 
 def parse_request(text: str, few_shot: bool = True, offline: bool = False) -> Tuple[Optional[Dict], str, List[str]]:
     """Validate, try the LLM, fall back to offline. Returns (profile, source, fixes).
@@ -336,8 +375,10 @@ def parse_request(text: str, few_shot: bool = True, offline: bool = False) -> Tu
     if not ok:
         return None, "rejected", [result]
 
-    if is_vague(result):  # nothing to parse: a broad default, no LLM call needed
-        return dict(VAGUE_PROFILE), "default", [VAGUE_NOTE]
+    kind = vague_kind(result)
+    if kind:  # nothing to parse: a broad default, no LLM call needed
+        profile, note = VAGUE_PROFILES[kind]
+        return dict(profile), "default", [note]
 
     # Checked on the request text itself, so the LLM and offline paths both get it.
     conflict = [CONFLICT_NOTE] if has_conflicting_cues(result) else []
@@ -345,11 +386,15 @@ def parse_request(text: str, few_shot: bool = True, offline: bool = False) -> Tu
     if not offline and is_llm_available():
         try:
             profile, fixes = validate_profile(parse_with_llm(result, few_shot))
+            if _has_no_preferences(profile):
+                return dict(VAGUE_PROFILES["none"][0]), "llm", [POPULAR_NOTE]
             return profile, "llm", conflict + fixes
         except (LLMError, ValueError):
             pass  # fall through to the offline parser
     raw, notes = parse_offline_with_notes(result)
     profile, fixes = validate_profile(raw)
+    if _has_no_preferences(profile):  # nothing usable was understood: fall back to popular songs
+        return dict(VAGUE_PROFILES["none"][0]), "offline", notes + [POPULAR_NOTE]
     return profile, "offline", conflict + notes + fixes
 
 

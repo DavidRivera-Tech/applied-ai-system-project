@@ -164,11 +164,22 @@ def test_cleaned_request_is_used_in_prompt(monkeypatch):
     assert 'The listener asked: "something chill to study to, no vocals"' in seen[0]
 
 
-def test_template_possessive():
-    song = {"title": "T", "artist": "Paper Lanterns", "genre": "lofi"}
-    other = {"title": "U", "artist": "LoRoom", "genre": "lofi"}
-    picks = assistant.template_answer([(song, 1.0, "r"), (other, 1.0, "r")])["picks"]
-    assert "Paper Lanterns' lofi" in picks[0]["why"] and "LoRoom's lofi" in picks[1]["why"]
+def test_template_text_is_friendly_with_no_numbers_or_scoring_terms():
+    for request in (REQUEST, "high energy workout music", "something good", "play me something",
+                    "romantic dinner music", "sad songs for a rainy day"):
+        result = assistant.run(request, offline=True)
+        text = " ".join(p["why"] for p in result["answer"]["picks"]) + " " + result["answer"]["summary"]
+        assert not re.search(r"\d", text), text
+        for banned in ("energy", "score", "target", "points", "(+", "tempo", "acousticness", "valence"):
+            assert banned not in text.lower(), (request, banned, text)
+        assert all(c["passed"] for c in result["verification"])
+
+
+def test_template_uses_vibe_words_only_when_the_user_hinted_a_vibe():
+    hinted = assistant.run("chill lofi", offline=True)["answer"]["picks"][0]["why"]
+    plain = assistant.run("romantic dinner music", offline=True)["answer"]["picks"][0]["why"]
+    assert any(word in hinted for word in ("calm", "easygoing", "upbeat", "high-intensity"))
+    assert not any(word in plain for word in ("calm", "easygoing", "upbeat", "high-intensity"))
 
 
 # ---- confidence adjustments for vague and conflicting requests
@@ -182,9 +193,15 @@ def test_conflict_penalty_lowers_confidence_by_point_two():
 
 def test_vague_request_confidence_is_capped():
     result = assistant.run("something good", offline=True)
-    assert result["profile"] == {"energy": 0.6}
-    assert "vague request: using a broad default" in result["parse_fixes"]
+    assert result["profile"] == {"mood": "happy", "energy": 0.45}
+    assert "Your request was general, so I went with something positive and easygoing." in result["parse_fixes"]
     assert result["answer"] is not None and result["confidence"] <= 0.5
+
+
+def test_every_kind_of_vague_request_is_capped_at_half():
+    for text in ("something good", "something bad", "play me something", "anything", "rough day", "fun"):
+        result = assistant.run(text, offline=True)
+        assert result["confidence"] <= 0.5, text
 
 
 def test_clean_request_confidence_is_not_adjusted():
@@ -212,3 +229,58 @@ def test_conflict_penalty_applies_on_the_llm_path_too(monkeypatch):
 
     clean = assistant.run("high energy workout music")
     assert "conflicting cues detected" not in clean["parse_fixes"]
+
+
+def test_result_includes_trace_steps_matching_the_log(tmp_path):
+    result = assistant.run(REQUEST, offline=True)
+    names = [s["step"] for s in result["trace_steps"]]
+    assert names[:3] == ["validate", "parse", "retrieve"] and names[-1] == "fallback"
+    assert all("ms" in s and "ok" in s for s in result["trace_steps"])
+    logged = json.loads((tmp_path / "logs" / "traces.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert logged["steps"] == result["trace_steps"]  # log file content unchanged
+
+
+def test_rejected_request_still_has_trace_steps():
+    result = assistant.run("", offline=True)
+    assert result["error"] and [s["step"] for s in result["trace_steps"]] == ["validate", "parse"]
+
+
+# ---- recommendations without invented energy
+
+def catalog():
+    return assistant.load_songs(assistant.SONGS_PATH)
+
+
+def test_happy_songs_have_no_energy_and_all_three_picks_are_happy():
+    result = assistant.run("happy songs", offline=True)
+    assert "energy" not in result["profile"] and result["profile"]["mood"] == "happy"
+    moods = [next(s["mood"] for s in catalog() if s["title"] == p["title"]) for p in result["answer"]["picks"]]
+    assert len(moods) == 3 and moods == ["happy"] * 3
+
+
+def test_something_good_is_happy_and_relaxed():
+    result = assistant.run("something good", offline=True)
+    assert result["profile"]["mood"] == "happy" and 0.35 <= result["profile"]["energy"] <= 0.55
+
+
+def test_something_bad_is_melancholic_and_calm():
+    result = assistant.run("something bad", offline=True)
+    assert result["profile"]["mood"] == "melancholic" and result["profile"]["energy"] < 0.35
+
+
+def test_play_me_something_returns_the_most_popular_songs():
+    result = assistant.run("play me something", offline=True)
+    assert result["profile"] == {"popularity": 100}
+    assert "Here are some of the popular songs in our catalog." in result["parse_fixes"]
+    top3 = [s["title"] for s in sorted(catalog(), key=lambda s: -s["popularity"])[:3]]
+    assert [p["title"] for p in result["answer"]["picks"]] == top3
+    assert result["confidence"] <= 0.5
+
+
+def test_popularity_counts_toward_the_best_possible_score_and_zero_is_guarded():
+    assert assistant.max_possible_score({"popularity": 100}) == 0.5
+    assert assistant.match_percent({"popularity": 100}, 0.44) == 88
+    assert assistant.match_percent({}, 1.0) == 0  # nothing to score: no division by zero
+    assert assistant.match_percent({"mood": "happy"}, 5.0) == 100  # clamped
+    score, _ = assistant.compute_confidence({}, [], "offline", "template")
+    assert 0 <= score <= 1

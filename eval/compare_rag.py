@@ -63,7 +63,7 @@ def generate(request, profile, parse_fixes, songs, retrieved, notes, use_guide, 
     api_failed = any(e["step"] == "generate" for e in trace.errors)
     source = "llm"
     if answer is None:  # offline mode, API failure, or the answer failed verification twice
-        answer = assistant.template_answer(retrieved)
+        answer = assistant.template_answer(retrieved, profile)
         checks = assistant.verify_answer(answer, retrieved, songs)
         state, source = "template", "template"
     confidence, _ = assistant.compute_confidence(profile, retrieved, "offline", state, parse_fixes)
