@@ -206,7 +206,7 @@ st.title("🎵 AIMA (AI Music Assistant)")
 
 st.text_input("Tell me your mood, activity, or genre, and I’ll find songs for you.", key="request",
               on_change=on_enter, placeholder="e.g. sad songs for a rainy day")
-offline = st.toggle("Offline mode (no AI)", value=True, key="offline")
+offline = st.toggle("Offline mode (no AI)", value=False, key="offline")
 
 if st.session_state.get("submitted"):
     cache_key = (st.session_state["query"], offline)

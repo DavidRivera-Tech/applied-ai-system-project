@@ -16,9 +16,13 @@ def isolated_log(monkeypatch, tmp_path):
     monkeypatch.setattr(assistant, "LOG_PATH", tmp_path / "traces.jsonl")
 
 
-def start():
+def start(offline=True):
+    """Open the page. The toggle starts OFF, so tests turn it on to stay offline (no network, no API calls)."""
     at = AppTest.from_file(APP, default_timeout=15).run()
     assert not at.exception
+    if offline:
+        at.toggle[0].set_value(True).run()
+        assert not at.exception
     return at
 
 
@@ -41,11 +45,11 @@ def test_every_song_has_a_cover_file():
 
 
 def test_page_is_a_simple_product_page():
-    at = start()
+    at = start(offline=False)
     assert at.title[0].value == "🎵 AIMA (AI Music Assistant)"
     assert at.text_input(key="request").label == "Tell me your mood, activity, or genre, and I’ll find songs for you."
     assert at.text_input(key="request").placeholder == "e.g. sad songs for a rainy day"
-    assert at.toggle[0].label == "Offline mode (no AI)" and at.toggle[0].value is True
+    assert at.toggle[0].label == "Offline mode (no AI)" and at.toggle[0].value is False
     assert len(at.toggle) == 1 and len(at.button) == 0 and len(at.sidebar.children) == 0
     assert "GenreFirst" not in text_of(at)
     assert len(at.get("image")) == 0 and len(at.expander) == 0  # nothing until a request is submitted

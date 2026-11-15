@@ -16,6 +16,7 @@ def isolated_log(monkeypatch, tmp_path):
 
 def submit(text):
     at = AppTest.from_file(APP, default_timeout=15).run()
+    at.toggle[0].set_value(True).run()  # the toggle starts OFF; turn offline mode on so no API calls are made
     at.text_input(key="request").set_value(text).run()
     assert not at.exception
     return at
