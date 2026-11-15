@@ -499,7 +499,7 @@ The first seven rows are real offline runs of the current code (`python -m src.a
 ### Prompt and RAG comparisons
 
 - **Parser: few-shot vs zero-shot.** On 3 head-to-head cases, both Gemini prompts returned valid JSON and the right mood. Zero-shot invented an energy value and extra mood tags for "romantic dinner music", and few-shot did not, so few-shot stays the default. Three other calls failed with 503 errors, so three cases is too small to call a winner. See [parser_comparison_subset.md](docs/evidence/parser_comparison_subset.md) and the [model card section](model_card.md#specialization).
-- **RAG: with vs without the genre guide (preliminary).** Two of the 6 answers fell back to the template after 503 errors, so only "romantic dinner music" is a fair pair. With the guide, the explanations used more of my genre-note words (5 vs 3) and were more specific, but the answers without it were still accurate. I will update this after I rerun it. See [rag_comparison.md](docs/evidence/rag_comparison.md) and the [model card section](model_card.md#rag-impact).
+- **RAG: with vs without the genre guide.** Two of the 6 answers fell back to the template after 503 errors, so only "romantic dinner music" is a fair pair. With the guide, the explanations used more of my genre-note words (5 vs 3) and were more specific, but the answers without it were still accurate. One run, one fair pair, so it's a first look. See [rag_comparison.md](docs/evidence/rag_comparison.md) and the [model card section](model_card.md#rag-impact).
 
 ## Design decisions and trade-offs
 

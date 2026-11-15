@@ -126,7 +126,7 @@ Full results: [parser_comparison_subset.md](docs/evidence/parser_comparison_subs
 
 **With vs without the genre guide**
 
-These are preliminary results from one live run on 2026-11-14. I will update this section after I rerun the comparison.
+These results are from one live run on 2026-11-14. Server errors cut it to one fair pair, so treat them as a first look, not proof.
 
 This compares answers written with the retrieved genre guide notes in the prompt against answers written without them. Both use the same retrieved songs. I ran 3 requests, each answered with and without the guide ([rag_comparison.md](docs/evidence/rag_comparison.md)). Two of the 6 answers fell back to the template after 503 errors. Each failure used 2 calls, the first try plus the retry. That means only "romantic dinner music" is a fair pair, because it is the only request where both answers came from Gemini.
 
