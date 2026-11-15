@@ -188,7 +188,7 @@ On Windows PowerShell, use `Copy-Item .env.example .env`. On Mac or Linux, use `
 
 | What | Command |
 |---|---|
-| Web app | `python -m streamlit run app.py` (the "Offline mode (no AI)" toggle starts ON; turn it off to use Gemini) |
+| Web app | `python -m streamlit run app.py` (the "Offline mode (no AI)" toggle starts OFF, so it uses Gemini when a key is set; turn it on to run without AI) |
 | Command line | `python -m src.assistant "your request"` |
 | Command line, no AI | `python -m src.assistant "your request" --offline` |
 | Tests | `pytest` |
@@ -329,7 +329,130 @@ This shows mixed feelings becoming a "bittersweet" mood, with a plain-English fi
 
 ### Live Gemini runs
 
-TODO: add 2–3 live runs (Nov 15)
+These are real live runs from 2026-11-15 on the current 60-song version, pasted unedited. Earlier that day, a test run accidentally called the live API. Two of these runs then hit a 429 error from Gemini. The error did not say it was a daily quota, and the third run worked, so it was probably a rate limit.
+
+```bash
+python -m src.assistant "sad songs for a rainy day"
+```
+
+```text
+Request: sad songs for a rainy day
+
+Profile (llm): {'genre': None, 'mood': 'melancholic', 'mood_tags': ['melancholic', 'sorrowful'], 'valence': 0.255}
+
+Retrieved songs:
+  1. Elegy for Winter Strings - Elena Vasquez [classical] score 1.98
+       mood match (+1.00); valence 0.22 vs target 0.26 (+0.48); shared mood tags melancholic, sorrowful (+0.50)
+  2. Crossroads Lament - Delta Jack [blues] score 1.73
+       mood match (+1.00); valence 0.30 vs target 0.26 (+0.48); shared mood tags sorrowful (+0.25)
+  3. Cold Window Bars - Mesa Verse [hip-hop] score 1.72
+       mood match (+1.00); valence 0.32 vs target 0.26 (+0.47); shared mood tags sorrowful (+0.25)
+  4. Ashes in the Wind - Grave Signal [metal] score 1.71
+       mood match (+1.00); valence 0.18 vs target 0.26 (+0.46); shared mood tags sorrowful (+0.25)
+  5. Midnight Train Blues - Delta Jack [blues] score 0.96
+       related mood: moody (+0.50); valence 0.34 vs target 0.26 (+0.46)
+
+Guide notes used: melancholic, classical, blues, hip-hop, metal
+
+Answer (template):
+  * Elegy for Winter Strings: A classical track with a melancholic feel, a good fit for what you asked.
+  * Crossroads Lament: A blues track with a melancholic feel, a good fit for what you asked.
+  * Cold Window Bars: A hip-hop track with a melancholic feel, a good fit for what you asked.
+
+  Based on your request, the best matches in the catalog are: Elegy for Winter Strings, Crossroads Lament, Cold Window Bars.
+
+Verification:
+  [PASS] titles_match_retrieved: all picks were retrieved
+  [PASS] no_duplicate_picks: no duplicates
+  [PASS] text_names_only_retrieved: picks' explanations and summary are clean
+  [PASS] correct_pick_count: expected 3 picks, got 3
+
+Confidence: 0.85 (top score 1.98 of a possible 2.00; request parsed by llm; verification answer built from a template (not LLM-checked).)
+```
+
+Gemini understood the request this time (`melancholic` with a `sorrowful` tag and valence 0.255). The answer then fell back to the template (explanations are the template wording and the confidence note says "not LLM-checked"). The cause was a 429 error (Gemini's quota or rate limit) on the answer step, and the template still passed all 4 checks. Confidence is 0.85. I did not rerun it.
+
+```bash
+python -m src.assistant "upbeat music for a road trip with friends"
+```
+
+```text
+Request: upbeat music for a road trip with friends
+
+Profile (offline): {'mood': 'happy', 'energy': 0.78, 'valence': 0.828}
+
+Retrieved songs:
+  1. Rooftop Lights - Indigo Parade [indie pop] score 2.96
+       mood match (+1.00); energy 0.76 vs target 0.78 (+1.47); valence 0.81 vs target 0.83 (+0.49)
+  2. Sunrise City - Neon Echo [pop] score 2.93
+       mood match (+1.00); energy 0.82 vs target 0.78 (+1.44); valence 0.84 vs target 0.83 (+0.49)
+  3. Paper Plane Parade - The Kite Club [indie pop] score 2.89
+       mood match (+1.00); energy 0.72 vs target 0.78 (+1.41); valence 0.86 vs target 0.83 (+0.48)
+  4. Campfire Morning - Wren Hollow [folk] score 2.64
+       mood match (+1.00); energy 0.55 vs target 0.78 (+1.16); valence 0.80 vs target 0.83 (+0.49)
+  5. Laser Horizon - Neon Echo [synthwave] score 2.39
+       related mood: euphoric (+0.50); energy 0.84 vs target 0.78 (+1.41); valence 0.78 vs target 0.83 (+0.48)
+
+Guide notes used: happy, indie pop, pop, folk, synthwave
+
+Answer (template):
+  * Rooftop Lights: An upbeat indie pop track with a happy feel, a good fit for what you asked.
+  * Sunrise City: A hype pop track with a happy feel, a good fit for what you asked.
+  * Paper Plane Parade: An upbeat indie pop track with a happy feel, a good fit for what you asked.
+
+  Based on your request, the best matches in the catalog are: Rooftop Lights, Sunrise City, Paper Plane Parade.
+
+Verification:
+  [PASS] titles_match_retrieved: all picks were retrieved
+  [PASS] no_duplicate_picks: no duplicates
+  [PASS] text_names_only_retrieved: picks' explanations and summary are clean
+  [PASS] correct_pick_count: expected 3 picks, got 3
+
+Confidence: 0.74 (top score 2.96 of a possible 3.00; request parsed by offline; verification answer built from a template (not LLM-checked).)
+```
+
+Gemini was unavailable for both steps here. The answer step failed with a 429 error (quota or rate limit). The profile also says `(offline)`, and the trace did not record the parse error. The fallback worked and the picks still passed all 4 checks. Confidence is 0.74. I did not rerun it.
+
+```bash
+python -m src.assistant "romantic rock"
+```
+
+```text
+Request: romantic rock
+
+Profile (offline): {'genre': 'rock', 'mood': 'romantic', 'mood_tags': ['romantic'], 'valence': 0.66}
+
+Retrieved songs:
+  1. Static Hearts - Voltline [rock] score 3.71
+       genre match (+2.00); mood match (+1.00); valence 0.58 vs target 0.66 (+0.46); shared mood tags romantic (+0.25)
+  2. Highway Thunder - Red Mile [rock] score 2.48
+       genre match (+2.00); valence 0.70 vs target 0.66 (+0.48)
+  3. Dawn Patrol - Red Mile [rock] score 2.43
+       genre match (+2.00); valence 0.52 vs target 0.66 (+0.43)
+  4. Storm Runner - Voltline [rock] score 2.41
+       genre match (+2.00); valence 0.48 vs target 0.66 (+0.41)
+  5. Corazón de Fuego - Los Soleros [latin] score 1.72
+       mood match (+1.00); valence 0.72 vs target 0.66 (+0.47); shared mood tags romantic (+0.25)
+
+Guide notes used: rock, romantic, latin
+
+Answer (llm):
+  * Static Hearts: Static Hearts is the top match for romantic rock, blending romantic warmth with strong guitar-driven energy.
+  * Highway Thunder: Highway Thunder adds an upbeat, high-energy rock backbeat to complement your session.
+  * Dawn Patrol: Dawn Patrol rounds out the selection with a smooth, balanced rock sound.
+
+  Here are three rock tracks perfectly suited for a romantic and energetic mood.
+
+Verification:
+  [PASS] titles_match_retrieved: all picks were retrieved
+  [PASS] no_duplicate_picks: no duplicates
+  [PASS] text_names_only_retrieved: picks' explanations and summary are clean
+  [PASS] correct_pick_count: expected 3 picks, got 3
+
+Confidence: 0.89 (top score 3.71 of a possible 3.75; request parsed by offline; verification passed on the first try.)
+```
+
+The profile came from the offline parser, but Gemini wrote the explanations (`Answer (llm)`). They are more natural than the template wording and the answer passed verification on the first try, with no retry. Confidence is 0.89. Only one romantic rock song exists (Static Hearts), so the other two picks are the closest matches, which are other rock songs. One caveat: Gemini's wording for Highway Thunder ("complement your session") and its summary line ("romantic and energetic mood") is a little loose for these songs.
 
 Earlier live captures from Nov 11, made on the 22-song version, are in [docs/evidence/phase3_live_runs.md](docs/evidence/phase3_live_runs.md).
 
